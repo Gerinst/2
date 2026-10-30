@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Avis-Flow v2</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one vertical flow lane, nested dashed scopes like the Power Automate designer, branches side by side on wide screens */
+:root {
+  --bg: #f6f5f1; --fg: #1f2328; --muted: #5d6470; --line: #d9d6cd; --card: #ffffff;
+  --cond: #4a3f9c; --cond-bg: #ecebf7; --true: #0f7a62; --true-bg: #e7f4ef; --false: #8a5a18; --false-bg: #f8eedc;
+  --new: #b43f1a; --new-bg: #fbe9e1; --code-bg: #f0eee8; --arrow: #8c8a82;
+  --font: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif; --mono: "IBM Plex Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #15171b; --fg: #e8e6df; --muted: #a2a59f; --line: #353941; --card: #1e2126;
+  --cond: #b7aef5; --cond-bg: #26244a; --true: #6fd3b6; --true-bg: #163229; --false: #e6b56a; --false-bg: #3a2c15;
+  --new: #f2957a; --new-bg: #452219; --code-bg: #262a31; --arrow: #7c8088; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #15171b; --fg: #e8e6df; --muted: #a2a59f; --line: #353941; --card: #1e2126;
+  --cond: #b7aef5; --cond-bg: #26244a; --true: #6fd3b6; --true-bg: #163229; --false: #e6b56a; --false-bg: #3a2c15;
+  --new: #f2957a; --new-bg: #452219; --code-bg: #262a31; --arrow: #7c8088; color-scheme: dark }
+body { background: var(--bg); color: var(--fg); font-family: var(--font); font-size: 15px; line-height: 1.5; margin: 0;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 24px 48px; }
+main { max-width: 980px; margin: 0 auto; }
+h1 { font-size: 26px; font-weight: 600; margin: 0 0 4px; text-wrap: balance; }
+h1 + p { margin: 0 0 16px; color: var(--muted); max-width: 70ch; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 13px; color: var(--muted); margin-bottom: 20px; }
+.legend span::before { content: ""; display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; border: 1px solid var(--line); background: var(--card); }
+.legend .l-new::before { background: var(--new-bg); border-color: var(--new); }
+.legend .l-cond::before { background: var(--cond-bg); border-color: var(--cond); }
+.legend .l-scope::before { border-style: dashed; border-color: var(--true); background: transparent; }
+.note { background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; margin: 0 0 22px; font-size: 14px; }
+.note code { background: transparent; padding: 0; }
+.lane { display: flex; flex-direction: column; align-items: stretch; }
+.step { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px 12px; min-width: 0; }
+.step.cond { background: var(--cond-bg); border-color: var(--cond); }
+.step.new { background: var(--new-bg); border-color: var(--new); }
+.eyebrow { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 0 0 2px; display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
+.tag { font-size: 11px; letter-spacing: .04em; text-transform: uppercase; border-radius: 999px; padding: 1px 8px; border: 1px solid currentColor; }
+.tag.new { color: var(--new); } .tag.keep { color: var(--true); }
+.step h2 { font-size: 17px; font-weight: 600; margin: 0 0 6px; overflow-wrap: anywhere; }
+.step.cond h2 { color: var(--cond); }
+.fields { display: grid; grid-template-columns: minmax(120px, 170px) minmax(0, 1fr); gap: 4px 12px; font-size: 14px; margin: 4px 0 0; }
+.fields dt { color: var(--muted); margin: 0; }
+.fields dd { margin: 0; min-width: 0; }
+@media (max-width: 520px) { .fields { grid-template-columns: minmax(0, 1fr); } .fields dt { margin-top: 6px; } }
+code { font-family: var(--mono); font-size: 12.5px; background: var(--code-bg); padding: 2px 5px; border-radius: 4px; white-space: pre-wrap; word-break: break-all; display: inline-block; max-width: 100%; }
+pre { font-family: var(--mono); font-size: 12.5px; background: var(--code-bg); padding: 8px 10px; border-radius: 6px; margin: 4px 0 0; white-space: pre-wrap; word-break: break-word; }
+.arrow { width: 2px; height: 22px; background: var(--arrow); margin: 0 auto; position: relative; }
+.arrow::after { content: ""; position: absolute; left: -4px; bottom: 0; border: 5px solid transparent; border-top: 7px solid var(--arrow); border-bottom: 0; }
+.arrow.any { background: repeating-linear-gradient(to bottom, var(--arrow) 0 4px, transparent 4px 7px); }
+.scope { border: 1.5px dashed var(--true); background: var(--true-bg); border-radius: 12px; padding: 12px; margin-top: 0; min-width: 0; }
+.scope.loop { border-color: var(--muted); background: transparent; }
+.scope.false { border-color: var(--false); background: var(--false-bg); }
+.scope > .label { font-size: 12px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--true); margin: 0 0 10px; }
+.scope.loop > .label { color: var(--muted); } .scope.false > .label { color: var(--false); }
+.branches { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+@media (min-width: 720px) { .branches { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .branches.uneven { grid-template-columns: minmax(0, 1fr) 200px; } .branches.stack { grid-template-columns: minmax(0, 1fr); } }
+.empty { color: var(--muted); font-size: 14px; }
+.flow2 { margin-top: 40px; border-top: 1px solid var(--line); padding-top: 22px; }
+.flow2 > h2 { font-size: 22px; font-weight: 600; margin: 0 0 4px; }
+
+.legend .l-plan::before { background: var(--plan-bg); border-color: var(--plan); border-style: dashed; }
+.step.plan { background: var(--plan-bg); border: 1.5px dashed var(--plan); }
+.planb > p { max-width: 75ch; }
+:root { --plan: #6b6f78; --plan-bg: #eef0f3; --ok: #0f7a62; --ok-bg: #e2f3ec; --chk: #8a5a18; --chk-bg: #f8eedc; --many: #4a3f9c; --many-bg: #ecebf7; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --plan: #9aa0aa; --plan-bg: #23262c; --ok: #6fd3b6; --ok-bg: #163229; --chk: #e6b56a; --chk-bg: #3a2c15; --many: #b7aef5; --many-bg: #26244a; } }
+:root[data-theme="dark"] { --plan: #9aa0aa; --plan-bg: #23262c; --ok: #6fd3b6; --ok-bg: #163229; --chk: #e6b56a; --chk-bg: #3a2c15; --many: #b7aef5; --many-bg: #26244a; }
+.result { margin: 0 0 26px; }
+.result h2, .setup h2 { font-size: 18px; font-weight: 600; margin: 0 0 8px; }
+.tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; vertical-align: top; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+th { font-size: 12px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+tr:last-child td { border-bottom: 0; }
+.chip { display: inline-block; border-radius: 999px; padding: 1px 9px; font-size: 13px; border: 1px solid currentColor; white-space: nowrap; }
+.chip.ok { color: var(--ok); background: var(--ok-bg); } .chip.check { color: var(--chk); background: var(--chk-bg); } .chip.many { color: var(--many); background: var(--many-bg); }
+</style>
+</head>
+<body>
+<main>
+<h1>Avis-Flow, Version 2</h1>
+<p>Freigegebenes Postfach: Jede neue Mail geht als Ganzes an das Skript (PDF, Excel/CSV und Mailtext). Ist es ein Zahlungsavis, bekommt die <b>Original-Mail</b> die Kategorie „Avise" und den Betrag hinten an den Betreff. Andere Mails bleiben unberührt. Keine zusätzlichen Mails.</p>
+<div class="legend"><span>Aktion</span><span class="l-cond">Bedingung</span><span class="l-scope">Zweig (gestrichelt)</span><span class="l-plan">Plan B (nur falls nötig)</span></div>
+<div class="note"><b>Aktionsnamen</b> genau so umbenennen (ohne Umlaute und Leerzeichen), sonst passen die Formeln nicht: <code>Export_email</code>, <code>Run_script</code>, <code>Kategorie_setzen</code>, <code>Betreff_setzen</code>. Überall <code>avis@firma.de</code> durch die Adresse eures freigegebenen Postfachs ersetzen.</div>
+
+<section class="result">
+  <h2>Was an der Mail passiert</h2>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Ergebnis des Skripts</th><th>Kategorie</th><th>Betreff</th></tr></thead>
+    <tbody>
+      <tr><td>Ein Avis, Betrag sicher</td><td><span class="chip ok">Avise</span></td><td><code>Zahlungsavis - 2.601,35 EUR</code></td></tr>
+      <tr><td>Ein Avis, Betrag ziemlich sicher</td><td><span class="chip ok">Avise</span></td><td><code>Zahlungsavis - 2.601,35 EUR (prüfen)</code></td></tr>
+      <tr><td>Ein Avis, Betrag unsicher</td><td><span class="chip check">Avis prüfen</span></td><td><code>Zahlungsavis - 2.601,35 EUR ?</code></td></tr>
+      <tr><td>Mehrere Avise in einer Mail</td><td><span class="chip many">mehrere Avise</span></td><td>unverändert</td></tr>
+      <tr><td>Unklar: Avis-Hinweis, aber nicht lesbar (Scan, verschlüsselt, altes .xls) oder nicht sicher erkennbar</td><td><span class="chip check">Avis prüfen</span></td><td>unverändert</td></tr>
+      <tr><td>Skript-Fehler oder Zeitüberschreitung</td><td><span class="chip check">Avis prüfen</span></td><td>unverändert</td></tr>
+      <tr><td>Kein Avis (Rechnung, Reklamation, Bestellung, Info, Mahnung …)</td><td>keine</td><td>unverändert</td></tr>
+    </tbody>
+  </table></div>
+  <p class="limits">Mit dem Betreff „…" ist der Betreff gemeint, den der Kunde geschrieben hat; er bleibt vorne stehen. Der Betrag steht immer im deutschen Format mit Währung.</p>
+</section>
+
+<div class="lane">
+  <div class="step">
+    <p class="eyebrow">Office 365 Outlook · Trigger</p>
+    <h2>Wenn eine neue E-Mail in einem freigegebenen Postfach eingeht (V2)</h2>
+    <dl class="fields">
+      <dt>Ursprüngliche Postfachadresse</dt><dd><code>avis@firma.de</code></dd>
+      <dt>Ordner</dt><dd>Posteingang (Ordnersymbol rechts im Feld)</dd>
+      <dt>Nur mit Anlagen</dt><dd><b>Nein</b> – auch Avise ohne Anhang (nur im Mailtext) sollen ankommen</dd>
+      <dt>Anlagen einschließen</dt><dd><b>Nein</b> – die Anhänge holt „E-Mail exportieren"</dd>
+      <dt>Einstellungen</dt><dd>Parallelitätssteuerung <b>ein</b>, Grad der Parallelität <code>1</code>, Maximale Anzahl wartender Ausführungen <code>100</code> (das Skript darf höchstens 3-mal in 10 Sekunden laufen). Den Hinweis „Drosselung der Trigger-Parallelität erkannt" in der Flowprüfung ignorieren.</dd>
+    </dl>
+  </div>
+  <div class="arrow"></div>
+  <div class="step cond">
+    <p class="eyebrow">Steuerung · Bedingung</p>
+    <h2>Keine_Automatik – keine Abwesenheitsnotiz, keine Zustellmeldung</h2>
+    <dl class="fields">
+      <dt>Verknüpfung</dt><dd><b>Und</b>; jede Zeile: links Blitz <b>Betreff</b> (Trigger), Mitte <b>enthält nicht</b>, rechts der Text</dd>
+      <dt>Zeile 1</dt><dd><code>Automatische Antwort</code></dd>
+      <dt>Zeile 2</dt><dd><code>Abwesend</code></dd>
+      <dt>Zeile 3</dt><dd><code>Unzustellbar</code></dd>
+      <dt>Zeile 4</dt><dd><code>Automatic reply</code></dd>
+      <dt>Zeile 5</dt><dd><code>Undeliverable</code></dd>
+      <dt>Hinweis</dt><dd>Der Designer hängt nach dem Ausfüllen oft eine leere Zeile an: rechts ⋯ → Löschen.</dd>
+    </dl>
+  </div>
+  <div class="arrow"></div>
+  <div class="branches uneven">
+    <div class="scope">
+      <p class="label">Wahr</p>
+      <div class="lane">
+        <div class="step">
+          <p class="eyebrow">Office 365 Outlook · E-Mail exportieren (V2)</p>
+          <h2>Export_email</h2>
+          <dl class="fields">
+            <dt>Nachrichten-ID</dt><dd>Blitz: <b>Nachrichten-ID</b> (Trigger)</dd>
+            <dt>Ursprüngliche Postfachadresse</dt><dd><code>avis@firma.de</code></dd>
+            <dt>Was passiert</dt><dd>Die ganze Mail als Datei (.eml): Text, alle Anhänge, weitergeleitete Mails.</dd>
+          </dl>
+        </div>
+        <div class="arrow"></div>
+        <div class="step">
+          <p class="eyebrow">Excel Online (Business) · Skript ausführen</p>
+          <h2>Run_script</h2>
+          <dl class="fields">
+            <dt>Speicherort</dt><dd>OneDrive for Business</dd>
+            <dt>Dokumentbibliothek</dt><dd><b>Dokumente</b> (englische Oberfläche: OneDrive)</dd>
+            <dt>Datei</dt><dd>Ordnersymbol → <code>AvisParser.xlsx</code> (leere Arbeitsmappe, wie bisher)</dd>
+            <dt>Skript</dt><dd><code>AvisV2</code> (Inhalt von <code>dist/AvisV2.ts</code>)</dd>
+            <dt>pdfBase64</dt><dd>fx <code>base64(body('Export_email'))</code></dd>
+            <dt>extraKeywords</dt><dd>leer lassen</dd>
+            <dt>mailSubject</dt><dd>Blitz: <b>Betreff</b> (Trigger)</dd>
+            <dt>Einstellungen</dt><dd>Wiederholungsrichtlinie: Festes Intervall, Anzahl <code>3</code>, Intervall <code>PT1M</code></dd>
+            <dt>Dauer</dt><dd>Im Lasttest 8 bis 20 Sekunden je Mail (meist Excel-Startzeit), auch bei 72 Seiten oder 20 PDF-Anlagen</dd>
+            <dt>Was das Skript macht</dt><dd>Liest PDF, Excel (.xlsx/.xlsm), CSV, SAP-Exporte und den Mailtext (ohne zitierten Verlauf bei Antworten). Entscheidet je Mail: Avis / mehrere Avise / unklar / kein Avis. Gibt die fertigen Inhalte für Kategorie und Betreff zurück.</dd>
+          </dl>
+        </div>
+        <div class="arrow"></div>
+        <div class="step cond">
+          <p class="eyebrow">Steuerung · Bedingung</p>
+          <h2>Kategorie_noetig – ist es ein Avis oder ein Prüffall?</h2>
+          <dl class="fields">
+            <dt>Links (fx)</dt><dd><code>or(not(equals(actions('Run_script')?['status'], 'Succeeded')), not(empty(outputs('Run_script')?['body/result/patchCategory'])))</code></dd>
+            <dt>Operator</dt><dd>ist gleich</dd>
+            <dt>Rechts (fx)</dt><dd><code>true</code></dd>
+            <dt>Einstellungen</dt><dd><b>Ausführen nach:</b> Run_script ist erfolgreich, ist fehlgeschlagen, hat Timeout (alle drei anhaken). So bekommt auch ein Skriptfehler „Avis prüfen".</dd>
+          </dl>
+        </div>
+        <div class="arrow"></div>
+        <div class="branches uneven">
+          <div class="scope">
+            <p class="label">Wahr</p>
+            <div class="lane">
+              <div class="step">
+                <p class="eyebrow">Office 365 Outlook · HTTP-Anforderung senden</p>
+                <h2>Kategorie_setzen</h2>
+                <dl class="fields">
+                  <dt>URI (fx)</dt><dd><code>concat('https://graph.microsoft.com/v1.0/users/avis@firma.de/messages/', triggerOutputs()?['body/id'])</code></dd>
+                  <dt>Methode</dt><dd>PATCH</dd>
+                  <dt>Text (fx)</dt><dd><code>if(equals(actions('Run_script')?['status'], 'Succeeded'), outputs('Run_script')?['body/result/patchCategory'], '{"categories":["Avis prüfen"]}')</code></dd>
+                  <dt>Content-Type</dt><dd><code>application/json</code></dd>
+                  <dt>Ergebnis</dt><dd>z. B. <code>{"categories":["Avise"]}</code>. Kategorien, die schon an der Mail hingen, bleiben erhalten.</dd>
+                </dl>
+              </div>
+              <div class="arrow"></div>
+              <div class="step cond">
+                <p class="eyebrow">Steuerung · Bedingung</p>
+                <h2>Betreff_noetig – Betrag in den Betreff?</h2>
+                <dl class="fields">
+                  <dt>Links (fx)</dt><dd><code>and(equals(actions('Run_script')?['status'], 'Succeeded'), not(empty(outputs('Run_script')?['body/result/patchSubject'])))</code></dd>
+                  <dt>Operator</dt><dd>ist gleich</dd>
+                  <dt>Rechts (fx)</dt><dd><code>true</code></dd>
+                  <dt>Warum</dt><dd>Bei „mehrere Avise", unklaren Fällen und schon bearbeiteten Betreffs liefert das Skript keinen neuen Betreff.</dd>
+                </dl>
+              </div>
+              <div class="arrow"></div>
+              <div class="branches uneven">
+                <div class="scope">
+                  <p class="label">Wahr</p>
+                  <div class="step">
+                    <p class="eyebrow">Office 365 Outlook · HTTP-Anforderung senden</p>
+                    <h2>Betreff_setzen</h2>
+                    <dl class="fields">
+                      <dt>URI (fx)</dt><dd><code>concat('https://graph.microsoft.com/v1.0/users/avis@firma.de/messages/', triggerOutputs()?['body/id'])</code></dd>
+                      <dt>Methode</dt><dd>PATCH</dd>
+                      <dt>Text (fx)</dt><dd><code>outputs('Run_script')?['body/result/patchSubject']</code></dd>
+                      <dt>Content-Type</dt><dd><code>application/json</code></dd>
+                      <dt>Ergebnis</dt><dd>z. B. <code>{"subject":"Zahlungsavis - 2.601,35 EUR"}</code></dd>
+                      <dt>Ab 31.12.2026</dt><dd>Microsoft hat angekündigt, Betreffänderungen an empfangenen Mails zu sperren. Dann schlägt nur diese Aktion fehl (die Kategorie ist schon gesetzt). Im Januar testen; falls gesperrt: Plan B unten.</dd>
+                    </dl>
+                  </div>
+                </div>
+                <div class="scope false">
+                  <p class="label">Falsch</p>
+                  <p class="empty">0 Aktionen – nur die Kategorie.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="scope false">
+            <p class="label">Falsch</p>
+            <p class="empty">0 Aktionen – kein Avis, die Mail bleibt unberührt.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="scope false">
+      <p class="label">Falsch</p>
+      <p class="empty">0 Aktionen – automatische Mail.</p>
+    </div>
+  </div>
+</div>
+
+<section class="setup">
+  <h2>Live getestet am 30.10.2026</h2>
+  <p class="limits">Microsoft-365-Testzugang mit freigegebenem Postfach, genau dieser Flow und dieses Skript, nur erfundene Test-Mails. <strong>Lasttest:</strong> 40 Mails in unter 2 Minuten verschickt (15 Avise, 25 Fallen). Jede Mail löste einen Lauf aus, 20 sogar zwei (ohne Folgen: der Betrag steht nie doppelt im Betreff). 37 Ergebnisse genau wie erwartet, 3 vertretbar, keine Falle mit „Avise", kein Avis verloren. Dazu zwei Mails mit 20 PDF-Anlagen und zwei frühere Runden mit 32 Mails.</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Test-Mail</th><th>Kategorie</th><th>Betreff danach</th></tr></thead>
+    <tbody>
+      <tr><td>Avis mit 72 Seiten (SAP-Liste, Übertrag auf jeder Seite)</td><td><span class="chip ok">Avise</span></td><td><code>… - 2.710.880,94 EUR</code></td></tr>
+      <tr><td>Avis mit 27 Seiten, Zwischensumme je Filiale, Dateiname „Dokument_…"</td><td><span class="chip ok">Avise</span></td><td><code>… - 826.636,07 EUR</code></td></tr>
+      <tr><td>Gutschriftsanzeige der Bank mit Kontostand vorher und nachher</td><td><span class="chip ok">Avise</span></td><td><code>… - 27.851,73 EUR</code></td></tr>
+      <tr><td>Englisches Remittance Advice, französisches Avis de paiement, Schweizer Avis in CHF</td><td><span class="chip ok">Avise</span></td><td><code>… - 145.118,91 EUR</code>, <code>… - 48.601,59 EUR</code>, <code>… - 42.761,38 CHF</code></td></tr>
+      <tr><td>Avis mit Skonto, Abzug und Gutschrift; Excel-Avis; Avis mit drei Rechnungskopien; Weiterleitung mit angehängter Mail</td><td><span class="chip ok">Avise</span></td><td>Betrag des Avis</td></tr>
+      <tr><td>Avis nur im Mailtext (Tabelle)</td><td><span class="chip ok">Avise</span></td><td><code>… - 12.186,83 EUR (prüfen)</code></td></tr>
+      <tr><td>Mailtext nennt einen anderen Betrag als das Avis (Zahlendreher)</td><td><span class="chip check">Avis prüfen</span></td><td><code>… - 27.732,85 EUR ?</code></td></tr>
+      <tr><td>Mailtext nennt eine zusätzliche Zahlung; zwei Avise in einer Mail</td><td><span class="chip many">mehrere Avise</span></td><td>unverändert</td></tr>
+      <tr><td>Eingescanntes Avis ohne Text</td><td><span class="chip check">Avis prüfen</span></td><td>unverändert</td></tr>
+      <tr><td>Avis als 20. Anlage zwischen 19 Rechnungen, neutraler Dateiname</td><td><span class="chip ok">Avise</span></td><td><code>… - 6.796,17 EUR</code></td></tr>
+      <tr><td>20 Rechnungen in einer Mail, kein Avis</td><td>keine</td><td>unverändert</td></tr>
+      <tr><td>23 Fallen: Rechnungen (auch mit „Zahlbetrag bei Skonto" und „bitte Zahlungsavis senden"), Gutschrift, Abschlags-, Proforma- und Stornorechnung, Mahnung, Zahlungserinnerung, Kontoauszug, Saldenbestätigung, Lastschrift-Ankündigung, Zahlungsbestätigung eines Shops, neue Bankverbindung, Preisanpassung, Lieferavis, Speditionsavis, Bestellung, Reklamation mit Einbehalt, Antwort auf ein Avis</td><td>keine</td><td>unverändert</td></tr>
+      <tr><td>Quittung über eine Barzahlung, englische Rechnung mit „Remittance information"</td><td><span class="chip check">Avis prüfen</span></td><td>unverändert (vertretbar)</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section class="setup">
+  <h2>Was das Skript zurückgibt</h2>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Feld</th><th>Inhalt</th></tr></thead>
+    <tbody>
+      <tr><td><code>verdict</code></td><td><code>advice</code> (ein Avis), <code>several</code> (mehrere), <code>unclear</code>, <code>other</code> (kein Avis)</td></tr>
+      <tr><td><code>verdictWhy</code></td><td>Kurzer Grund auf Englisch, z. B. <code>advice title 'Zahlungsavis' in Zahlung_4711.pdf</code></td></tr>
+      <tr><td><code>category</code></td><td><code>Avise</code>, <code>Avis prüfen</code>, <code>mehrere Avise</code> oder leer</td></tr>
+      <tr><td><code>subjectSuffix</code> / <code>newSubject</code></td><td>Anhang an den Betreff / der fertige neue Betreff (leer = keine Änderung)</td></tr>
+      <tr><td><code>patchCategory</code> / <code>patchSubject</code></td><td>Fertiger Text für die beiden HTTP-Aktionen (leer = nichts tun)</td></tr>
+      <tr><td><code>documents</code></td><td>Je geprüftem Dokument eine Zeile: Name, Art, Urteil, Betrag, Sicherheit</td></tr>
+      <tr><td><code>amount</code>, <code>currency</code>, <code>confidence</code>, <code>line</code>, <code>candidates</code>, <code>text</code>, <code>warnings</code>, <code>error</code></td><td>Wie bisher – zur Fehlersuche im Ausführungsverlauf</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section class="setup">
+  <h2>Einmalige Einrichtung</h2>
+  <ol>
+    <li><b>IT:</b> Das Konto, unter dem der Flow läuft, bekommt <b>Vollzugriff</b> auf das freigegebene Postfach (für Plan B zusätzlich „Senden als"). Nach dem Einrichten bis zu 2 Stunden warten.</li>
+    <li><b>Kategorien</b> im freigegebenen Postfach anlegen (Outlook → Kategorisieren → Alle Kategorien → Neu): <code>Avise</code>, <code>Avis prüfen</code>, <code>mehrere Avise</code>. Die Farbe ist egal. Ohne Anlegen erscheinen sie trotzdem, nur ohne Farbe.</li>
+    <li><b>Skript:</b> Excel im Browser → Automatisieren → Neues Skript → Inhalt von <code>dist/AvisV2.ts</code> einfügen → umbenennen in <code>AvisV2</code> → speichern. Das alte Skript <code>AvisPdfAmount</code> bleibt unverändert.</li>
+    <li><b>Arbeitsmappe:</b> die vorhandene leere <code>AvisParser.xlsx</code> in OneDrive weiterverwenden.</li>
+    <li><b>Neuer Flow</b> mit den Aktionen oben (der alte Flow bleibt, bis der neue läuft; nie beide gleichzeitig auf dasselbe Postfach).</li>
+  </ol>
+</section>
+
+<section class="setup">
+  <h2>5-Minuten-Test vor dem Bau</h2>
+  <ol>
+    <li>Testflow: Trigger „Wenn eine neue E-Mail in einem freigegebenen Postfach eingeht (V2)", Postfach <code>avis@firma.de</code>, Betrefffilter <code>PATCHTEST</code>.</li>
+    <li>Aktion <b>HTTP-Anforderung senden</b> (Office 365 Outlook): URI über <b>fx</b>: <code>concat('https://graph.microsoft.com/v1.0/users/avis@firma.de/messages/', triggerOutputs()?['body/id'])</code>, Methode PATCH, Text <code>{"categories":["Avise"]}</code>.</li>
+    <li>Zweite gleiche Aktion mit Text <code>{"subject":"PATCHTEST Zahlungsavis - 2.601,35 EUR"}</code>.</li>
+    <li>Dritte Aktion <b>E-Mail exportieren (V2)</b> mit derselben Nachrichten-ID und Postfachadresse (zeigt, was beim Skript ankommt).</li>
+    <li>Mail mit Betreff „PATCHTEST Zahlungsavis" an das Postfach schicken, 1–3 Minuten warten. Richtig: neuer Betreff + Kategorie in Outlook, alle drei Aktionen grün. Fehler 403 = kein Vollzugriff oder falsches Konto; 404 = URI/ID falsch.</li>
+  </ol>
+</section>
+
+<section class="flow2 planb">
+  <h2>Plan B – nur falls Microsoft den Betreff sperrt (ab Januar testen)</h2>
+  <p>Statt den Betreff des Originals zu ändern, legt der Flow eine <b>Weiterleitung als Entwurf</b> an, setzt dort den Betreff (Entwürfe dürfen weiter geändert werden), schickt sie an das Postfach und verschiebt das Original in den Ordner „Avis-Original". Absender der Kopie ist das Postfach; den Kunden sieht man im Kopfblock der Mail, Antworten gehen über „Antwort an" an den Kunden. Braucht „Senden als" für das Konto. Je Avis landet eine Kopie in „Gesendete Elemente" des Postfachs. Vor dem Umbau mit einer Testmail prüfen (Antwortcodes 201 / 200 / 202, zweiter Lauf startet, Anhänge vollständig).</p>
+  <div class="lane">
+    <div class="step plan">
+      <p class="eyebrow">Ersetzt Betreff_setzen · HTTP-Anforderung senden</p>
+      <h2>Kopie_anlegen</h2>
+      <dl class="fields">
+        <dt>URI (fx)</dt><dd><code>concat('https://graph.microsoft.com/v1.0/users/avis@firma.de/messages/', triggerOutputs()?['body/id'], '/createForward')</code></dd>
+        <dt>Methode</dt><dd>POST</dd>
+        <dt>Text</dt><dd><code>{"toRecipients":[{"emailAddress":{"address":"avis@firma.de"}}]}</code></dd>
+        <dt>Einstellungen</dt><dd>Wiederholungsrichtlinie: <b>Keine</b> (eine Wiederholung hinterließe einen zweiten Entwurf)</dd>
+      </dl>
+    </div>
+    <div class="arrow"></div>
+    <div class="step plan">
+      <p class="eyebrow">HTTP-Anforderung senden</p>
+      <h2>Kopie_anpassen</h2>
+      <dl class="fields">
+        <dt>URI (fx)</dt><dd><code>concat('https://graph.microsoft.com/v1.0/users/avis@firma.de/messages/', body('Kopie_anlegen')?['id'])</code></dd>
+        <dt>Methode</dt><dd>PATCH</dd>
+        <dt>Text (fx)</dt><dd><code>string(setProperty(setProperty(json('{}'), 'subject', outputs('Run_script')?['body/result/newSubject']), 'replyTo', createArray(setProperty(json('{}'), 'emailAddress', setProperty(json('{}'), 'address', triggerOutputs()?['body/from'])))))</code></dd>
+      </dl>
+    </div>
+    <div class="arrow"></div>
+    <div class="step plan">
+      <p class="eyebrow">HTTP-Anforderung senden</p>
+      <h2>Kopie_senden</h2>
+      <dl class="fields">
+        <dt>URI (fx)</dt><dd><code>concat('https://graph.microsoft.com/v1.0/users/avis@firma.de/messages/', body('Kopie_anlegen')?['id'], '/send')</code></dd>
+        <dt>Methode</dt><dd>POST, Text leer</dd>
+        <dt>Einstellungen</dt><dd>Wiederholungsrichtlinie: <b>Keine</b> (sonst kann die Kopie doppelt ankommen)</dd>
+      </dl>
+    </div>
+    <div class="arrow"></div>
+    <div class="step plan">
+      <p class="eyebrow">Office 365 Outlook · E-Mail verschieben (V2)</p>
+      <h2>Original_verschieben</h2>
+      <dl class="fields">
+        <dt>Nachrichten-ID</dt><dd>Blitz: <b>Nachrichten-ID</b> (Trigger)</dd>
+        <dt>Ordner</dt><dd><code>Avis-Original</code> (vorher im Postfach anlegen; erst Postfachadresse eintragen, dann Ordner wählen)</dd>
+        <dt>Ursprüngliche Postfachadresse</dt><dd><code>avis@firma.de</code></dd>
+        <dt>Reihenfolge</dt><dd>Immer als letzte Aktion. Schlägt die Kopie fehl, bleibt das Original mit seiner Kategorie im Posteingang – nichts verschwindet.</dd>
+      </dl>
+    </div>
+  </div>
+  <div class="step cond" style="margin-top:18px">
+    <p class="eyebrow">Plan B · neue erste Bedingung direkt unter dem Trigger</p>
+    <h2>Eigene_Kopie – die Kopie startet den Flow noch einmal</h2>
+    <dl class="fields">
+      <dt>Links (fx)</dt><dd><code>equals(toLower(coalesce(triggerOutputs()?['body/from'], '')), 'avis@firma.de')</code></dd>
+      <dt>Operator</dt><dd>ist gleich, rechts fx <code>true</code></dd>
+      <dt>Wahr</dt><dd>Nur <b>Kategorie_Kopie</b>: HTTP PATCH auf <code>concat('https://graph.microsoft.com/v1.0/users/avis@firma.de/messages/', triggerOutputs()?['body/id'])</code>, Text (fx) <code>if(endsWith(coalesce(triggerOutputs()?['body/subject'], ''), ' ?'), '{"categories":["Avis prüfen"]}', '{"categories":["Avise"]}')</code>. Kein Skript, sonst käme der Betrag doppelt.</dd>
+      <dt>Falsch</dt><dd>der normale Flow (Keine_Automatik und alles darunter)</dd>
+    </dl>
+  </div>
+</section>
+
+<section class="setup">
+  <h2>Grenzen</h2>
+  <p class="limits">Etwa 150 Avise + 150 andere Mails am Tag: rund 300 Skript-Aufrufe (Limit 1.600 pro Nutzer und Tag), rund 1.500 Power-Automate-Anfragen (Limit bei Microsoft-365-Lizenz offiziell 6.000/24 h). Das Skript darf 3-mal in 10 Sekunden laufen (daher Grad 1 und Wiederholungsrichtlinie) und höchstens 120 s; es hört nach 90 s selbst auf. Sehr große Mails (über ca. 4 MB) können am Größenlimit scheitern und bekommen dann „Avis prüfen". Nicht lesbar: reine Scans ohne Text (keine Texterkennung), verschlüsselte Mails und PDFs, altes Excel-Format .xls, Purview-geschützte Mails – sie bekommen „Avis prüfen", wenn ein Avis-Hinweis da ist. Klick-für-Klick-Anleitung: <code>docs/ANLEITUNG.md</code>.</p>
+</section>
+</main>
+</body>
+</html>
