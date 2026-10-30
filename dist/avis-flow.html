@@ -79,9 +79,27 @@ svg { display: block; }
 .seg button[aria-pressed="true"] { background: var(--brand); color: #fff; }
 .seg button:not([aria-pressed="true"]):hover { background: var(--hover); }
 .spacer { flex: 1; }
-.mbf { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-2); }
-.mbf input { width: 230px; max-width: 100%; height: 30px; padding: 0 8px; border: 1px solid var(--border); border-bottom-color: var(--text-3); border-radius: 4px; background: var(--surface); color: var(--text); font: 13px var(--font); }
-.mbf input:focus { outline: 2px solid var(--brand); outline-offset: -1px; }
+.mbwrap { position: relative; display: inline-flex; align-items: center; gap: 6px; }
+.mbf { font-size: 13px; font-weight: 600; color: var(--text-2); white-space: nowrap; }
+.mbwrap input { width: 270px; max-width: 100%; height: 30px; padding: 0 8px; border: 1px solid var(--border); border-bottom-color: var(--text-3); border-radius: 4px; background: var(--surface); color: var(--text); font: 13px var(--font); }
+.mbwrap input:focus { outline: 2px solid var(--brand); outline-offset: -1px; }
+.mbwrap input.empty { border-color: var(--chg-bd); box-shadow: 0 0 0 2px var(--chg-bg); }
+.mbwrap input.bad { border-color: var(--fa); box-shadow: 0 0 0 2px rgba(197,15,31,.15); }
+.mbhelp { width: 24px; height: 24px; flex: none; border: 1px solid var(--border); border-radius: 50%; background: var(--surface); color: var(--brand); font-weight: 700; font-size: 13px; cursor: pointer; }
+.mbhelp:hover, .mbhelp[aria-expanded="true"] { background: var(--brand-weak); }
+.mbpop { position: absolute; top: calc(100% + 8px); right: 0; z-index: 70; width: 440px; max-width: calc(100vw - 32px); padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); box-shadow: var(--shadow-lg); font-size: 13px; line-height: 1.45; }
+.mbpop[hidden] { display: none; }
+.mbpop .h { display: block; font-size: 14px; margin-bottom: 6px; }
+.mbpop p { margin: 0 0 8px; }
+.mbpop ul { margin: 0 0 8px; padding-left: 18px; }
+.mbpop li { margin-bottom: 5px; }
+.mbpop .mbbad { color: var(--fa); font-weight: 600; margin: 0; }
+mark.mbm { background: var(--chg-bg); color: inherit; border-radius: 3px; padding: 0 2px; box-shadow: inset 0 -2px 0 var(--chg-bd); }
+.setup { flex: none; display: flex; align-items: center; gap: 12px; padding: 7px 16px; background: var(--chg-bg); border-bottom: 1px solid var(--chg-bd); font-size: 13px; }
+.setup span { flex: 1; }
+.setup[hidden] { display: none; }
+.mbnote { margin-top: 6px; padding: 7px 10px; border-radius: 4px; background: var(--brand-weak); font-size: 12.5px; }
+.mbnote.warn { background: var(--chg-bg); box-shadow: inset 3px 0 0 var(--chg-bd); }
 .cmd { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border: 0; border-radius: 4px; background: transparent; cursor: pointer; font-size: 14px; white-space: nowrap; }
 .cmd:hover { background: var(--hover); }
 .cmd svg { width: 16px; height: 16px; }
@@ -385,11 +403,28 @@ svg { display: block; }
   </div>
   <span class="progress" id="progress"></span>
   <span class="spacer"></span>
-  <label class="mbf" title="Adresse des freigegebenen Postfachs: wird überall eingesetzt, auch in den Formeln zum Kopieren">Postfach <input id="mb" type="email" inputmode="email" autocomplete="off" spellcheck="false" placeholder="avis@firma.de"></label>
+  <div class="mbwrap">
+    <label class="mbf" for="mb">Avis-Postfach</label>
+    <input id="mb" type="email" inputmode="email" autocomplete="off" spellcheck="false" placeholder="Adresse des freigegebenen Postfachs" aria-describedby="mbPop">
+    <button type="button" class="mbhelp" id="mbHelp" aria-expanded="false" aria-controls="mbPop" title="Welche Adresse gehört hierher?">?</button>
+    <div class="mbpop" id="mbPop" role="dialog" aria-label="Welche Adresse gehört hierher?" hidden>
+      <b class="h">Welche Adresse gehört hierher?</b>
+      <p>Die E-Mail-Adresse des <b>freigegebenen Postfachs</b>, in dem die Zahlungsavise ankommen, z. B. <code>avis@firma.de</code>. Der Flow überwacht dieses Postfach und ändert dort Kategorie und Betreff.</p>
+      <ul>
+        <li><b>Nicht</b> deine eigene Adresse und nicht die Adresse, mit der du dich anmeldest.</li>
+        <li><b>Freigegebenes Postfach, keine Microsoft-365-Gruppe:</b> In Outlook im Web steht es links als eigenes Postfach mit eigenem Posteingang. Steht es unter „Gruppen“, geht es nicht – dort kann der Flow weder Kategorie noch Betreff setzen.</li>
+        <li><b>Vollzugriff:</b> Das Konto, mit dem der Flow verbunden ist, braucht Vollzugriff auf das Postfach (richtet die IT ein). Wenn du darin Mails verschieben kannst, passt es meist.</li>
+        <li><b>So findest du sie:</b> Postfach in Outlook im Web öffnen – die Adresse steht in der Adresszeile des Browsers: <code>…/mail/avis@firma.de/</code>. Sonst die IT fragen.</li>
+      </ul>
+      <p>Hier eingetragen, steht sie automatisch überall, wo der Flow sie braucht: im <b>Trigger</b>, in <b>Export email</b> und in den <b>URI-Formeln</b> von Kategorie setzen und Betreff setzen. Im Designer muss es an allen vier Stellen genau dieselbe Adresse sein.</p>
+      <p class="mbbad" id="mbBad" hidden>Das sieht nicht wie eine E-Mail-Adresse aus.</p>
+    </div>
+  </div>
   <button type="button" class="cmd" id="bInfo"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M8 7v4.5M8 4.6v.1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>Infos</button>
   <button type="button" class="cmd hide-sm" id="bSave"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 2.5h9l2 2v9h-11z" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M5 2.5v3.5h5V2.5M5 13.5v-4h6v4" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>Speichern</button>
   <button type="button" class="cmd hide-sm" id="bTest"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 1.5h4M6.8 1.5v4.2L2.6 13a1 1 0 0 0 .9 1.5h9a1 1 0 0 0 .9-1.5L9.2 5.7V1.5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>Testen</button>
 </div>
+<div class="setup" id="setup" role="status" hidden><span><b>Zuerst:</b> oben rechts bei „Avis-Postfach“ die Adresse des freigegebenen Postfachs eintragen, in dem die Avise ankommen. Dann stehen alle Felder und Formeln richtig da.</span><button type="button" class="btn" id="setupHelp">Welche Adresse?</button></div>
 <div class="ws">
   <aside class="panel" id="panel" hidden role="dialog" aria-label="Details zur Karte"></aside>
   <div class="cwrap">
@@ -422,6 +457,7 @@ svg { display: block; }
       </table></div>
       <p>„Zahlungsavis“ steht für den Betreff, den der Absender geschrieben hat; er bleibt vorne stehen. Der Betrag steht immer im deutschen Format mit Währung.</p>
     </div></details>
+    <details><summary>Welches Postfach? (Feld „Avis-Postfach“ oben rechts)</summary><div class="dc" id="mbDrawer"></div></details>
     <details><summary>Designer-Tipps (vor dem Bauen lesen)</summary><div class="dc"><ul>
       <li><b>Umbenennen:</b> Karte anklicken, oben im Bereich auf den Titel klicken, neuen Namen eintippen, Enter. Auf der Fläche zeigt Power Automate statt <code>_</code> ein Leerzeichen („Run script“). Das ist richtig; die Formeln brauchen den Namen mit <code>_</code>.</li>
       <li><b>Formeln</b> (<span class="kbd">fx</span>): ins Feld klicken → rechts neben dem Feld auf <span class="kbd">fx</span> → Formel einfügen → <b>Hinzufügen</b>. Meldet der Editor „Der Ausdruck ist ungültig“, obwohl genau kopiert: noch einmal auf <b>Hinzufügen</b>.</li>
@@ -643,6 +679,7 @@ svg { display: block; }
       code: CODE.trigger,
       codeNote: 'Ordner-ID setzt der Designer selbst, wenn Sie „Posteingang“ wählen. Den Wert „recurrence“ (Abfrage jede Minute) legt Power Automate fest; der Vergleich ignoriert ihn.',
       info: '<p>Startet den Flow für jede neue Mail im Posteingang des freigegebenen Postfachs, auch für Mails ohne Anlage (Avise stehen manchmal nur im Mailtext).</p>' +
+        '<h4>Welches Postfach?</h4><p>Das freigegebene Postfach, in dem die Zahlungsavise ankommen (z. B. <code>avis@firma.de</code>) – nicht das eigene Postfach und keine Microsoft-365-Gruppe. Das Konto des Flows braucht darauf Vollzugriff. Dieselbe Adresse steht in Export email und in den URI-Formeln von Kategorie setzen und Betreff setzen. <a href="#" class="lnk" data-mbhelp>Mehr dazu</a></p>' +
         '<h4>Warum Grad der Parallelität 1?</h4><p>Excel lässt ein Skript höchstens 3-mal in 10 Sekunden laufen. Mit Grad 1 arbeitet der Flow die Mails nacheinander ab; bis zu 100 warten in der Schlange. Die Flowprüfung zeigt dazu „Drosselung der Trigger-Parallelität erkannt“ – den Hinweis ignorieren.</p>' +
         '<h4>Gut zu wissen</h4><ul><li>Power Automate fragt das Postfach regelmäßig ab; eine neue Mail ist nach 1 bis 5 Minuten dran.</li><li>Mails, die vor dem Einschalten kamen, bearbeitet der Flow nicht.</li><li>Bei vielen gleichzeitigen Mails startet Power Automate manchmal zwei Läufe für dieselbe Mail. Das schadet nicht: Der Betrag steht nie doppelt im Betreff.</li></ul>'
     },
@@ -954,9 +991,24 @@ svg { display: block; }
   function copyBtn(text, label) { return '<button type="button" class="cp" data-copy="' + esc(text) + '">' + (label || 'Kopieren') + '</button>'; }
   function tokenHTML(label, conn) { return '<span class="tok' + (conn === 'excel' ? ' xl' : '') + '"><span class="ti">' + IC[conn] + '</span><span class="tl">' + esc(label) + '</span><span class="tx">×</span></span>'; }
   function fxTokHTML(short) { return '<span class="tok fx"><span class="fxi">fx</span><span class="tl">' + esc(short) + '</span><span class="tx">×</span></span>'; }
+  function markMB(html) {
+    var a = esc(mb()), b = esc(mb().toLowerCase());
+    var out = html.split(a).join('\u0001' + a + '\u0002');
+    if (b !== a) out = out.split(b).join('\u0001' + b + '\u0002');
+    return out.split('\u0001').join('<mark class="mbm" title="Adresse des freigegebenen Avis-Postfachs">').split('\u0002').join('</mark>');
+  }
   function exprHTML(expr, title) {
     var e = sub(expr);
-    return '<div class="expr"><div class="eh"><span>' + (title || '<b>fx</b> Formel') + '</span>' + copyBtn(e) + '</div><code>' + esc(e) + '</code></div>';
+    var hasMB = expr.indexOf('{{MB}}') >= 0 || expr.indexOf('{{mb}}') >= 0;
+    return '<div class="expr"><div class="eh"><span>' + (title || '<b>fx</b> Formel') + '</span>' + copyBtn(e) + '</div><code>' + (hasMB ? markMB(esc(e)) : esc(e)) + '</code></div>' +
+      (hasMB ? mbNote('Markiert: die Adresse des freigegebenen Avis-Postfachs.') : '');
+  }
+  function mbIsSet() { return MB.trim() !== '' && MB.trim().toLowerCase() !== DEFAULT_MB; }
+  function mbValid() { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(MB.trim()); }
+  function mbNote(text) {
+    if (!mbIsSet()) return '<div class="mbnote warn">Noch Beispieladresse <code>' + esc(DEFAULT_MB) + '</code>: oben rechts bei „Avis-Postfach“ die Adresse eures freigegebenen Postfachs eintragen, dann steht sie hier richtig.</div>';
+    if (!mbValid()) return '<div class="mbnote warn">Oben bei „Avis-Postfach“ steht keine gültige E-Mail-Adresse.</div>';
+    return text ? '<div class="mbnote">' + text + '</div>' : '';
   }
   function howHTML(f) { return f.how ? '<div class="how">' + subH(f.how) + (f.alt ? '<span class="alt">Oder über ' + FX + ': <code>' + esc(f.alt) + '</code> ' + copyBtn(f.alt) + '</span>' : '') + '</div>' : ''; }
   function fieldHTML(f) {
@@ -964,10 +1016,15 @@ svg { display: block; }
     switch (f.t) {
       case 'people':
         box = '<span class="persona"><span class="av">' + esc(mb().charAt(0).toUpperCase()) + '</span>' + esc(mb()) + '<span class="x">×</span></span><span class="phtext">Einen Teil eines Namens oder einer E-Mail-Adresse eingeben …</span><span class="dd">' + IC.down + '</span>';
-        copy = mb(); break;
+        copy = mb();
+        extra = mbNote('<b>Adresse des freigegebenen Avis-Postfachs</b>, nicht deine eigene Adresse und keine Microsoft-365-Gruppe. Überall dieselbe: Trigger, Export email und URI-Formeln. <a href="#" class="lnk" data-mbhelp>Welche Adresse?</a>');
+        break;
       case 'dropdown': box = '<span class="val">' + esc(f.value) + '</span><span class="dd">' + IC.down + '</span>'; break;
       case 'folder': case 'file': box = '<span class="val">' + esc(f.value) + '</span><span class="fi">' + IC.folder + '</span>'; break;
-      case 'text': box = '<span class="val mono">' + esc(sub(f.value)) + '</span>'; copy = sub(f.value); break;
+      case 'text':
+        box = '<span class="val mono">' + (f.value.indexOf('{{MB}}') >= 0 ? markMB(esc(sub(f.value))) : esc(sub(f.value))) + '</span>'; copy = sub(f.value);
+        if (f.value.indexOf('{{MB}}') >= 0) extra = mbNote('Markiert: die Adresse des freigegebenen Avis-Postfachs.');
+        break;
       case 'token': box = tokenHTML(f.tok, f.conn); if (f.expr) extra = exprHTML(f.expr); break;
       case 'fx': box = fxTokHTML(f.short); extra = exprHTML(f.expr); break;
       case 'advanced':
@@ -1283,15 +1340,36 @@ svg { display: block; }
   });
   document.addEventListener('keydown', function (ev) {
     if (ev.key !== 'Escape') return;
-    if (!$('#drawer').hidden) closeDrawer(); else if (!panel.hidden) closePanel();
+    if (!$('#mbPop').hidden) togglePop(false); else if (!$('#drawer').hidden) closeDrawer(); else if (!panel.hidden) closePanel();
   });
 
   var mbInput = $('#mb');
   mbInput.value = MB;
   var mbTimer;
+  function updateMBUI() {
+    var v = MB.trim(), valid = mbValid();
+    mbInput.classList.toggle('empty', v === '');
+    mbInput.classList.toggle('bad', v !== '' && !valid);
+    $('#mbBad').hidden = v === '' || valid;
+    $('#setup').hidden = mbIsSet() && valid;
+  }
+  function togglePop(show) {
+    var p = $('#mbPop'), s = show === undefined ? p.hidden : show;
+    p.hidden = !s;
+    $('#mbHelp').setAttribute('aria-expanded', String(s));
+  }
   mbInput.addEventListener('input', function () {
     MB = mbInput.value; store.set('mb', MB.trim());
+    updateMBUI();
     clearTimeout(mbTimer); mbTimer = setTimeout(refreshMB, 150);
+  });
+  mbInput.addEventListener('focus', function () { if (!mbIsSet()) togglePop(true); });
+  $('#mbHelp').addEventListener('click', function (ev) { ev.stopPropagation(); togglePop(); });
+  $('#setupHelp').addEventListener('click', function (ev) { ev.stopPropagation(); togglePop(true); mbInput.focus(); });
+  document.addEventListener('click', function (ev) {
+    var h = ev.target.closest('[data-mbhelp]');
+    if (h) { ev.preventDefault(); ev.stopPropagation(); if (!$('#drawer').hidden) closeDrawer(); togglePop(true); mbInput.focus(); return; }
+    if (!$('#mbPop').hidden && !ev.target.closest('.mbwrap')) togglePop(false);
   });
 
   function setView(v) {
@@ -1335,6 +1413,12 @@ svg { display: block; }
   window.addEventListener('hashchange', openFromHash);
 
   /* ---------- start ---------- */
+  (function () {
+    var c = $('#mbPop').cloneNode(true);
+    c.querySelectorAll('.h, .mbbad').forEach(function (e) { e.remove(); });
+    $('#mbDrawer').innerHTML = c.innerHTML;
+  })();
+  updateMBUI();
   if (store.get('hintSeen', false)) $('#hint').hidden = true;
   $('#vMain').setAttribute('aria-pressed', String(view === 'main'));
   $('#vPlanB').setAttribute('aria-pressed', String(view === 'planB'));

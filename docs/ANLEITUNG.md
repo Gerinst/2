@@ -97,7 +97,7 @@ Allgemeine Hinweise zum Designer:
 1. Power Automate → **Erstellen** → **Automatisierter Cloud-Flow** → Name `Avis V2`.
 2. Trigger suchen: `freigegebenen Postfach` → **Wenn eine neue E-Mail in einem freigegebenen Postfach eingeht (V2)** → **Erstellen**.
 3. Trigger anklicken:
-   - **Ursprüngliche Postfachadresse**: `avis@firma.de` eintippen → **„avis@firma.de" verwenden** anklicken.
+   - **Ursprüngliche Postfachadresse**: `avis@firma.de` eintippen → **„avis@firma.de" verwenden** anklicken. Gemeint ist die Adresse des **freigegebenen Postfachs**, in dem die Avise ankommen, nicht die eigene Adresse und keine Microsoft-365-Gruppe (in Outlook im Web steht ein freigegebenes Postfach links als eigenes Postfach mit eigenem Posteingang; die Adresse steht beim Öffnen in der Adresszeile: `…/mail/avis@firma.de/`). Dieselbe Adresse kommt in Export_email und in die URI-Formeln.
    - **Erweiterte Parameter** → **Alle anzeigen**:
      - **Nur mit Anlagen**: **Nein** (auch Avise nur im Mailtext sollen ankommen)
      - **Anlagen einschließen**: **Nein** (die Anlagen holt Export_email)
