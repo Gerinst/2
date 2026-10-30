@@ -2,7 +2,7 @@
 
 Diese Anleitung baut den Flow für ein **freigegebenes Postfach** (Exchange Shared Mailbox). Jede neue Mail geht als Ganzes an das Skript: PDF-Anlagen, Excel- und CSV-Dateien, SAP-Exporte und der Mailtext. Ist die Mail ein Zahlungsavis, bekommt die **Original-Mail** die Kategorie „Avise" und den Betrag hinten an den Betreff. Andere Mails bleiben unberührt. Es kommen keine zusätzlichen Mails.
 
-Alle Klickwege in dieser Anleitung sind am 30.10.2026 in einem Microsoft-365-Testzugang mit genau diesem Skript und diesem Flow nachgegangen worden (12 Test-Mails, 12 richtige Ergebnisse). Die Übersicht aller Aktionen und Felder auf einer Seite steht in `dist/avis-flow.html`.
+Alle Klickwege in dieser Anleitung sind am 30.10.2026 in einem Microsoft-365-Testzugang mit genau diesem Skript und diesem Flow nachgegangen worden (12 Test-Mails, 12 richtige Ergebnisse). Einen klickbaren Nachbau des Flows mit allen Feldern, Einstellungen und Formeln zum Kopieren gibt es in `dist/avis-flow.html` (herunterladen und im Browser öffnen).
 
 ## Überblick
 
@@ -86,6 +86,7 @@ Damit prüfst du vorab, ob Vollzugriff und Betreffänderung im Postfach funktion
 
 Allgemeine Hinweise zum Designer:
 
+- **Nachbau daneben öffnen:** `dist/avis-flow.html` herunterladen, im Browser öffnen und oben rechts bei „Postfach" die Adresse eintragen. Jede Karte dort zeigt die Felder genau wie im Designer, mit den fertigen Formeln zum Kopieren. Nach dem Speichern kann man im Reiter **Codeansicht** die Codeansicht des eigenen Flows einfügen und vergleichen lassen.
 - **Umbenennen:** Aktion anklicken, oben im Bereich auf den Titel klicken, den neuen Namen eintippen, Enter. Auf der Fläche zeigt Power Automate statt `_` ein Leerzeichen („Run script"). Das ist normal; die Formeln brauchen den Namen mit `_`.
 - **Formeln** immer über **fx** einfügen: ins Feld klicken → rechts neben dem Feld auf **fx** → Formel aus der passenden Datei in `formeln/` einfügen → **Hinzufügen**. Meldet der Editor „Der Ausdruck ist ungültig", die Formel prüfen; ist sie genau kopiert, hilft oft ein zweiter Klick auf **Hinzufügen**.
 - **Werte aus dem Trigger** (Betreff, Nachrichten-ID): ins Feld klicken → **Blitz-Symbol** → im Suchfeld den Namen eintippen → anklicken.
@@ -119,7 +120,7 @@ Allgemeine Hinweise zum Designer:
    - `Unzustellbar`
    - `Automatic reply`
    - `Undeliverable`
-4. Der Designer hängt nach dem Ausfüllen oft eine leere Zeile an: rechts **⋯** → **Löschen**. Keine leere Zeile stehen lassen.
+4. Der Designer hängt nach dem Ausfüllen oft eine leere Zeile an: rechts **⋯** → **Löschen**. Nach dem Speichern und Neuladen zeigt er trotzdem wieder eine leere Zeile an; die wird nicht gespeichert und stört nicht.
 
 Alle folgenden Aktionen kommen in den Zweig **Wahr** von Keine_Automatik. Der Zweig **Falsch** bleibt leer.
 
@@ -245,7 +246,7 @@ Microsoft hat angekündigt, ab dem 31.12.2026 Änderungen an Betreff und Text em
 
 1. In der ersten Januarwoche den 5-Minuten-Test (Schritt 4) wiederholen.
 2. Sind beide Aktionen grün: nichts tun.
-3. Ist die Kategorie-Aktion grün und die Betreff-Aktion rot (meist 403): Die Sperre greift. Dann auf Plan B umstellen. Plan B legt statt der Betreffänderung eine Weiterleitung als Entwurf an, setzt dort den Betreff, schickt sie an das Postfach und verschiebt das Original in einen Ordner „Avis-Original". Alle Aktionen und Formeln dazu stehen in `dist/avis-flow.html` unter „Plan B". Plan B braucht zusätzlich „Senden als" (Schritt 1 gibt das schon).
+3. Ist die Kategorie-Aktion grün und die Betreff-Aktion rot (meist 403): Die Sperre greift. Dann auf Plan B umstellen. Plan B legt statt der Betreffänderung eine Weiterleitung als Entwurf an, setzt dort den Betreff, schickt sie an das Postfach und verschiebt das Original in einen Ordner „Avis-Original". Alle Aktionen und Formeln dazu stehen in `dist/avis-flow.html` (oben auf „Plan B" umschalten). Plan B braucht zusätzlich „Senden als" (Schritt 1 gibt das schon).
 
 ## Grenzen
 
