@@ -94,6 +94,25 @@ svg { display: block; }
 .mbpop ul { margin: 0 0 8px; padding-left: 18px; }
 .mbpop li { margin-bottom: 5px; }
 .mbpop .mbbad { color: var(--fa); font-weight: 600; margin: 0; }
+.dcp { margin: 8px 0 6px; max-width: 480px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); box-shadow: var(--shadow); font-size: 13px; overflow: hidden; }
+.dcp .top { display: flex; align-items: center; gap: 8px; padding: 5px 10px; background: var(--surface-2); border-bottom: 1px solid var(--border-2); font-size: 12px; color: var(--text-2); }
+.dcp .top span { flex: 1; }
+.dcp .srch { display: flex; align-items: center; gap: 6px; margin: 8px 10px; padding: 4px 8px; border: 1px solid var(--border); border-bottom: 2px solid var(--brand); border-radius: 4px; color: var(--text); }
+.dcp .srch svg { width: 13px; height: 13px; color: var(--text-3); }
+.dcp .grp { display: flex; align-items: center; gap: 8px; padding: 7px 10px; background: var(--brand-weak); font-weight: 600; }
+.dcp .grp .ic { width: 20px; height: 20px; flex: none; }
+.dcp .grp .ic svg { width: 20px; height: 20px; }
+.dcp .it { position: relative; padding: 6px 110px 6px 10px; border-left: 3px solid transparent; }
+.dcp .it b { display: block; font-size: 13px; }
+.dcp .it span { font-size: 12px; color: var(--text-2); }
+.dcp .it.pick { border-left-color: var(--ok); background: rgba(16,124,16,.10); }
+.dcp .it.wrong { border-left-color: var(--fa); background: rgba(197,15,31,.07); }
+.dcp .it.dim { opacity: .5; }
+.dcp .it em { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-style: normal; font-size: 11.5px; font-weight: 700; white-space: nowrap; }
+.dcp .it.pick em { color: var(--ok); }
+.dcp .it.wrong em { color: var(--fa); }
+.dcp .nt { padding: 6px 10px 8px; font-size: 12px; color: var(--text-2); border-top: 1px solid var(--border-2); }
+.dcplabel { margin-top: 10px; font-size: 12.5px; font-weight: 600; }
 mark.mbm { background: var(--chg-bg); color: inherit; border-radius: 3px; padding: 0 2px; box-shadow: inset 0 -2px 0 var(--chg-bd); }
 .setup { flex: none; display: flex; align-items: center; gap: 12px; padding: 7px 16px; background: var(--chg-bg); border-bottom: 1px solid var(--chg-bd); font-size: 13px; }
 .setup span { flex: 1; }
@@ -460,8 +479,8 @@ mark.mbm { background: var(--chg-bg); color: inherit; border-radius: 3px; paddin
     <details><summary>Welches Postfach? (Feld „Avis-Postfach“ oben rechts)</summary><div class="dc" id="mbDrawer"></div></details>
     <details><summary>Designer-Tipps (vor dem Bauen lesen)</summary><div class="dc"><ul>
       <li><b>Umbenennen:</b> Karte anklicken, oben im Bereich auf den Titel klicken, neuen Namen eintippen, Enter. Auf der Fläche zeigt Power Automate statt <code>_</code> ein Leerzeichen („Run script“). Das ist richtig; die Formeln brauchen den Namen mit <code>_</code>.</li>
-      <li><b>Formeln</b> (<span class="kbd">fx</span>): ins Feld klicken → rechts neben dem Feld auf <span class="kbd">fx</span> → Formel einfügen → <b>Hinzufügen</b>. Meldet der Editor „Der Ausdruck ist ungültig“, obwohl genau kopiert: noch einmal auf <b>Hinzufügen</b>.</li>
-      <li><b>Werte aus dem Trigger</b> (<span class="kbd bolt"></span> Blitz): ins Feld klicken → Blitz-Symbol → Namen eintippen (z. B. „Betreff“) → anklicken.</li>
+      <li><b>Formeln</b> (<span class="kbd">fx</span>): ins Feld klicken → neben dem Feld erscheinen Blitz und <span class="kbd">fx</span> (bei Bedingungen links am Feld) → <span class="kbd">fx</span> → Formel einfügen → <b>Hinzufügen</b>. Meldet der Editor „Der Ausdruck ist ungültig“, obwohl genau kopiert: noch einmal auf <b>Hinzufügen</b>.</li>
+      <li><b>Werte aus dem Trigger</b> (Blitz, dynamischer Inhalt): ins Feld klicken → Blitz → im Suchfeld den Namen eintippen (z. B. „Betreff“) → den Eintrag unter der Überschrift <b>„Wenn eine neue E-Mail in einem freigegebenen Postfach eingeht (V2)“</b> anklicken. Für „Betreff“ gibt es dort nur einen Eintrag. Bei der <b>Nachrichten-ID</b> steht „Internetnachrichten-ID“ direkt darüber – die ist falsch.</li>
       <li>Ein „/“ im Feld öffnet ein kleines Menü. Einfach weitertippen; wählst du dort etwas aus, verschwindet das „/“.</li>
       <li>Oben rechts bei „Postfach“ die echte Adresse eintragen: Dann stehen in allen Feldern und Formeln zum Kopieren gleich die richtigen Werte.</li>
     </ul></div></details>
@@ -576,6 +595,26 @@ mark.mbm { background: var(--chg-bg); color: inherit; border-radius: 3px; paddin
   IC.finish = IC.check;
   var BOLT = '<span class="kbd" title="Blitz: dynamischer Inhalt">' + IC.bolt + '</span>';
   var FX = '<span class="kbd" title="Ausdruck">fx</span>';
+  IC.search = '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="6.8" cy="6.8" r="4.3" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="m10 10 4 4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>';
+
+  /* the dynamic content picker (Blitz) as the designer shows it, checked in the live flow on 31.10.2026 */
+  var TRIGGER_GROUP = 'Wenn eine neue E-Mail in einem freigegebenen Postfach eingeht (V2)';
+  var PICK = {
+    betreff: { search: 'Betreff', items: [['Betreff', 'Der Betreff der Nachricht', 'pick']],
+      note: 'Unter dieser Überschrift gibt es nur einen Eintrag „Betreff“. Ohne Suche steht er in der Liste unter Von und An („Mehr anzeigen“ zeigt alle 39 Werte des Triggers).' },
+    msgid: { search: 'Nachrichten', items: [['Internetnachrichten-ID', 'Die Nachrichten-ID im von RFC2822 angegebenen Format.', 'wrong'], ['Nachrichten-ID', 'Der eindeutige Bezeichner der Nachricht', 'pick'],
+      ['Empfangszeit', 'Datum und Uhrzeit des Nachrichtenempfangs', 'dim'], ['An', 'Die Empfänger der Nachricht', 'dim'], ['Betreff', 'Der Betreff der Nachricht', 'dim'], ['Text', 'Der Text der Nachricht', 'dim']],
+      note: 'Achtung: „Internetnachrichten-ID“ steht direkt darüber und sieht ähnlich aus. Damit findet der Flow die Mail nicht.' }
+  };
+  function pickerHTML(key) {
+    var p = PICK[key];
+    return '<div class="dcp" aria-label="Blitz-Menü wie im Designer"><div class="top"><span>So sieht das Blitz-Menü im Designer aus</span></div>' +
+      '<div class="srch">' + IC.search + esc(p.search) + '</div>' +
+      '<div class="grp"><span class="ic">' + IC.outlook + '</span>' + esc(TRIGGER_GROUP) + '</div>' +
+      p.items.map(function (it) {
+        return '<div class="it ' + it[2] + '"><b>' + esc(it[0]) + '</b><span>' + esc(it[1]) + '</span>' + (it[2] === 'pick' ? '<em>✓ dieses anklicken</em>' : it[2] === 'wrong' ? '<em>✗ nicht dieses</em>' : '') + '</div>';
+      }).join('') + '<div class="nt">' + esc(p.note) + '</div></div>';
+  }
 
   /* ---------- the flow, exactly as in the designer (Codeansicht of 30.10.2026) ---------- */
   var OUTLOOK_API = '/providers/Microsoft.PowerApps/apis/shared_office365';
@@ -687,7 +726,7 @@ mark.mbm { background: var(--chg-bg); color: inherit; border-radius: 3px; paddin
       kind: 'cond', title: 'Keine Automatik', rename: 'Keine_Automatik', sub: 'Steuerung · Bedingung',
       add: ['<b>+</b> unter dem Trigger → <b>Aktion hinzufügen</b> → Suche <code>Bedingung</code> → <b>Bedingung</b> (Steuerung).'],
       params: [{ t: 'condition', group: 'Und', rows: AUTO.map(function (txt) { return { l: { tok: 'Betreff', conn: 'outlook' }, op: 'enthält nicht', r: { text: txt } }; }),
-        how: 'Jede Zeile: links ' + BOLT + ' → <b>Betreff</b> (aus dem Trigger), Mitte <b>enthält nicht</b>, rechts den Text eintippen oder einfügen. Neue Zeile: <b>Zeile hinzufügen</b>.' }],
+        how: 'Jede Zeile: links ins Feld klicken → links am Feld erscheinen ' + BOLT + ' und ' + FX + ' → ' + BOLT + ' → unter der Überschrift „Wenn eine neue E-Mail in einem freigegebenen Postfach eingeht (V2)“ → <b>Betreff</b> („Der Betreff der Nachricht“). Mitte <b>enthält nicht</b>, rechts den Text eintippen oder einfügen. Neue Zeile: <b>Zeile hinzufügen</b>.' }],
       summary: { chg: false, html: 'Nichts ändern.' },
       settings: [S.tracking],
       code: CODE.Keine_Automatik,
@@ -698,7 +737,7 @@ mark.mbm { background: var(--chg-bg); color: inherit; border-radius: 3px; paddin
       kind: 'action', conn: 'outlook', title: 'Export email', rename: 'Export_email', sub: 'Office 365 Outlook · E-Mail exportieren (V2)',
       add: ['Im Zweig <b>Wahr</b> von Keine Automatik: <b>+</b> → Suche <code>E-Mail exportieren</code> → <b>E-Mail exportieren (V2)</b> (Office 365 Outlook).'],
       params: [
-        { t: 'token', label: 'Nachrichten-ID', req: true, tok: 'Nachrichten-ID', conn: 'outlook', alt: F.msgId, how: 'Ins Feld klicken → ' + BOLT + ' → <code>Nachrichten-ID</code> suchen → den Eintrag <b>Nachrichten-ID</b> des Triggers anklicken.' },
+        { t: 'token', label: 'Nachrichten-ID', req: true, tok: 'Nachrichten-ID', conn: 'outlook', alt: F.msgId, pick: 'msgid', how: 'Ins Feld klicken → ' + BOLT + ' → im Suchfeld <code>Nachrichten</code> eintippen → unter der Überschrift des Triggers <b>Nachrichten-ID</b> („Der eindeutige Bezeichner der Nachricht“). <b>Nicht</b> „Internetnachrichten-ID“, die direkt darüber steht.' },
         { t: 'advanced', text: '1 von 1 wird/werden angezeigt', how: '<b>Alle anzeigen</b> klicken.' },
         { t: 'people', label: 'Ursprüngliche Postfachadresse', how: 'Adresse eintippen → <b>„{{MB}}“ verwenden</b>.' },
         { t: 'conn' }
@@ -719,7 +758,7 @@ mark.mbm { background: var(--chg-bg); color: inherit; border-radius: 3px; paddin
         { t: 'dropdown', label: 'Skript', req: true, value: 'AvisV2', how: '<b>AvisV2</b> wählen. Erscheint erst, wenn das Skript in Excel gespeichert und so benannt ist.' },
         { t: 'fx', label: 'ScriptParameters/pdfBase64', req: true, short: 'base64(...)', expr: F.pdf, how: 'Ins Feld klicken → ' + FX + ' → Formel einfügen → <b>Hinzufügen</b>. Beim Bauen heißt das Feld nur „pdfBase64“.' },
         { t: 'advanced', text: '1 von 2 wird/werden angezeigt', how: '<b>Alle anzeigen</b> → nur <b>mailSubject</b> ausfüllen, <b>extraKeywords</b> leer lassen (nach dem Speichern ausgeblendet).' },
-        { t: 'token', label: 'ScriptParameters/mailSubject', tok: 'Betreff', conn: 'outlook', alt: F.subject, how: 'Ins Feld klicken → ' + BOLT + ' → <b>Betreff</b> (aus dem Trigger). Beim Bauen heißt das Feld nur „mailSubject“.' },
+        { t: 'token', label: 'ScriptParameters/mailSubject', tok: 'Betreff', conn: 'outlook', alt: F.subject, pick: 'betreff', how: 'Ins Feld klicken → ' + BOLT + ' → unter der Überschrift „Wenn eine neue E-Mail in einem freigegebenen Postfach eingeht (V2)“ → <b>Betreff</b>. Beim Bauen heißt das Feld nur „mailSubject“.' },
         { t: 'conn' }
       ],
       summary: { chg: true, html: '<b>Ändern:</b> Wiederholungsrichtlinie <b>Festes Intervall</b>, Anzahl <b>3</b>, Intervall <b>PT1M</b>. „Ausführen nach“ bleibt: Export email ist erfolgreich.' },
@@ -873,7 +912,7 @@ mark.mbm { background: var(--chg-bg); color: inherit; border-radius: 3px; paddin
       kind: 'action', conn: 'outlook', planB: true, title: 'Original verschieben', rename: 'Original_verschieben', sub: 'Office 365 Outlook · E-Mail verschieben (V2) · Plan B',
       add: ['<b>+</b> unter Kopie senden → Suche <code>E-Mail verschieben</code> → <b>E-Mail verschieben (V2)</b> (Office 365 Outlook).', 'Vorher im Postfach den Ordner <b>Avis-Original</b> anlegen.'],
       params: [
-        { t: 'token', label: 'Nachrichten-ID', req: true, tok: 'Nachrichten-ID', conn: 'outlook', alt: F.msgId, how: 'Ins Feld klicken → ' + BOLT + ' → <b>Nachrichten-ID</b> (Trigger).' },
+        { t: 'token', label: 'Nachrichten-ID', req: true, tok: 'Nachrichten-ID', conn: 'outlook', alt: F.msgId, pick: 'msgid', how: 'Ins Feld klicken → ' + BOLT + ' → <b>Nachrichten-ID</b> unter der Überschrift des Triggers, nicht „Internetnachrichten-ID“.' },
         { t: 'folder', label: 'Ordner', req: true, value: 'Avis-Original', how: 'Erst unten die Postfachadresse eintragen, dann über das Ordnersymbol <b>Avis-Original</b> wählen – sonst zeigt die Liste das eigene Postfach.' },
         { t: 'advanced', text: '1 von 1 wird/werden angezeigt', how: '<b>Alle anzeigen</b>.' },
         { t: 'people', label: 'Ursprüngliche Postfachadresse', how: 'Adresse eintippen → <b>„{{MB}}“ verwenden</b>.' },
@@ -1035,7 +1074,7 @@ mark.mbm { background: var(--chg-bg); color: inherit; border-radius: 3px; paddin
     }
     return '<div class="field"><div class="flabel">' + esc(f.label) + (f.req ? '<span class="req">*</span>' : '') + '</div>' +
       '<div class="frow"><div class="fbox">' + box + '</div>' + (f.clear ? '<span class="clr" aria-hidden="true">×</span>' : '') + (copy !== null ? copyBtn(copy) : '') + '</div>' +
-      extra + howHTML(f) + '</div>';
+      extra + howHTML(f) + (f.pick ? pickerHTML(f.pick) : '') + '</div>';
   }
   function condVal(v) {
     if (v.tok) return tokenHTML(v.tok, v.conn);
@@ -1054,7 +1093,9 @@ mark.mbm { background: var(--chg-bg); color: inherit; border-radius: 3px; paddin
     });
     h += '<div class="crow empty" title="Leere Zeile: zeigt der Designer nach dem Laden immer an. Sie wird nicht gespeichert."><span class="cbx"></span><div class="fbox"><span class="phtext">Wert auswählen</span></div><div class="fbox"><span class="val">ist gleich</span><span class="dd">' + IC.down + '</span></div><div class="fbox"><span class="phtext">Wert auswählen</span></div><span class="more">⋯</span></div>';
     h += '<div class="addrow">+ Zeile hinzufügen</div>';
-    h += '<div class="how">' + subH(f.how) + '</div><div class="how">Die blasse leere Zeile am Ende: beim Bauen über <b>⋯ → Löschen</b> entfernen. Nach dem Neuladen zeigt der Designer sie trotzdem wieder an; sie wird nicht gespeichert.</div></div>';
+    h += '<div class="how">' + subH(f.how) + '</div>';
+    if (f.rows.some(function (r) { return r.l.tok === 'Betreff'; })) h += '<div class="dcplabel">Links „Betreff“ aus dem Blitz-Menü:</div>' + pickerHTML('betreff');
+    h += '<div class="how">Die blasse leere Zeile am Ende: beim Bauen über <b>⋯ → Löschen</b> entfernen. Nach dem Neuladen zeigt der Designer sie trotzdem wieder an; sie wird nicht gespeichert.</div></div>';
     return h;
   }
 

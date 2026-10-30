@@ -88,8 +88,8 @@ Allgemeine Hinweise zum Designer:
 
 - **Nachbau daneben öffnen:** `dist/avis-flow.html` herunterladen, im Browser öffnen und oben rechts bei „Postfach" die Adresse eintragen. Jede Karte dort zeigt die Felder genau wie im Designer, mit den fertigen Formeln zum Kopieren. Nach dem Speichern kann man im Reiter **Codeansicht** die Codeansicht des eigenen Flows einfügen und vergleichen lassen.
 - **Umbenennen:** Aktion anklicken, oben im Bereich auf den Titel klicken, den neuen Namen eintippen, Enter. Auf der Fläche zeigt Power Automate statt `_` ein Leerzeichen („Run script"). Das ist normal; die Formeln brauchen den Namen mit `_`.
-- **Formeln** immer über **fx** einfügen: ins Feld klicken → rechts neben dem Feld auf **fx** → Formel aus der passenden Datei in `formeln/` einfügen → **Hinzufügen**. Meldet der Editor „Der Ausdruck ist ungültig", die Formel prüfen; ist sie genau kopiert, hilft oft ein zweiter Klick auf **Hinzufügen**.
-- **Werte aus dem Trigger** (Betreff, Nachrichten-ID): ins Feld klicken → **Blitz-Symbol** → im Suchfeld den Namen eintippen → anklicken.
+- **Formeln** immer über **fx** einfügen: ins Feld klicken → neben dem Feld auf **fx** (bei Bedingungen erscheinen Blitz und fx links am Feld) → Formel aus der passenden Datei in `formeln/` einfügen → **Hinzufügen**. Meldet der Editor „Der Ausdruck ist ungültig", die Formel prüfen; ist sie genau kopiert, hilft oft ein zweiter Klick auf **Hinzufügen**.
+- **Werte aus dem Trigger** (Betreff, Nachrichten-ID): ins Feld klicken → **Blitz-Symbol** → im Suchfeld den Namen eintippen → den Eintrag unter der Überschrift **„Wenn eine neue E-Mail in einem freigegebenen Postfach eingeht (V2)"** anklicken. Für „Betreff" gibt es dort nur einen Eintrag („Der Betreff der Nachricht").
 - Tippst du ein „/" in ein Feld, öffnet sich ein kleines Menü. Einfach weitertippen; wählst du dort etwas aus, verschwindet das „/".
 
 ### 5.1 Neuer Flow und Trigger
@@ -114,7 +114,7 @@ Allgemeine Hinweise zum Designer:
 
 1. **+** unter dem Trigger → Suche `Bedingung` → **Bedingung** (Steuerung) → umbenennen in `Keine_Automatik`.
 2. Verknüpfung oben links: **Und**.
-3. Fünf Zeilen, jede so: links Blitz → **Betreff** (aus dem Trigger), Mitte **enthält nicht**, rechts der Text:
+3. Fünf Zeilen, jede so: links Blitz → **Betreff** (unter der Überschrift des Triggers), Mitte **enthält nicht**, rechts der Text:
    - `Automatische Antwort`
    - `Abwesend`
    - `Unzustellbar`
@@ -127,7 +127,7 @@ Alle folgenden Aktionen kommen in den Zweig **Wahr** von Keine_Automatik. Der Zw
 ### 5.3 Export_email
 
 1. Im Zweig **Wahr**: **+** → Suche `E-Mail exportieren` → **E-Mail exportieren (V2)** (Office 365 Outlook) → umbenennen in `Export_email`.
-2. **Nachrichten-ID**: Blitz → `Nachrichten-ID` → den Eintrag **Nachrichten-ID** des Triggers anklicken.
+2. **Nachrichten-ID**: Blitz → im Suchfeld `Nachrichten` → den Eintrag **Nachrichten-ID** („Der eindeutige Bezeichner der Nachricht") anklicken. Nicht **Internetnachrichten-ID**, die direkt darüber steht: Damit findet der Flow die Mail nicht.
 3. **Erweiterte Parameter** → **Alle anzeigen** → **Ursprüngliche Postfachadresse**: `avis@firma.de` eintippen → **„avis@firma.de" verwenden**.
 
 Die Aktion gibt die ganze Mail als Datei (.eml) weiter: Text, alle Anlagen, auch weitergeleitete Mails.
