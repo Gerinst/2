@@ -1458,7 +1458,8 @@ function scanMailBytes(b0: Uint8Array, name: string, depth: number, st: MailScan
   }
   // a spreadsheet or office file (ZIP / CFB) inside a CMS container or PEM: kept as an attachment
   if ((b[0] === 0x50 && b[1] === 0x4b && b[2] === 0x03 && b[3] === 0x04) || (b[0] === 0xd0 && b[1] === 0xcf && b[2] === 0x11 && b[3] === 0xe0)) {
-    if (depth > 0) addAtt(st, name, "", "", b);
+    // (an Outlook item among them is scanned as an attached mail)
+    if (depth > 0 && !(b[0] === 0xd0 && scanMsg(b, name, depth, st))) addAtt(st, name, "", "", b);
     return;
   }
   if (b.length >= 8 && b[0] === 0x76 && b[1] === 0xe8 && b[2] === 0x04 && b[3] === 0x60 && b[4] === 0xc4 && b[5] === 0x11 && b[6] === 0xe3 && b[7] === 0x86) {
@@ -1664,6 +1665,8 @@ function scanMimeEntity(s: string, start: number, end: number, depth: number, st
       }
     }
   }
+  // an Outlook item (.msg) attached as a file: scanned as an attached mail of its own
+  if (data.length >= 512 && data[0] === 0xd0 && data[1] === 0xcf && data[2] === 0x11 && data[3] === 0xe0 && scanMsg(data, name, depth, st)) return;
   // an empty attachment is kept when it has a name (it may be the advice that the sender failed to attach)
   if (data.length > 0 || name !== "") addAtt(st, name, pdfType ? "application/pdf" : type, mimeParam(ct, "charset"), data);
 }
@@ -4737,6 +4740,345 @@ function dataToLines(tree: DataNode, info: DataInfo): string[] {
   dataRender(top, [], out, 0);
   if (out.length > DATA_MAX_LINES) info.cut = true;
   return out.filter((l) => l.trim() !== "");
+}
+
+// ===================================================================================================================
+// Outlook items (.msg): a Compound File with MAPI property streams, attached to a mail as a file (a saved mail dragged
+// into a new one). Its subject, sender, recipients, text and attachments are scanned like an attached mail
+// (message/rfc822). Only what the mail scan needs is read: Unicode and ANSI strings, binary streams, a few fixed
+// properties (recipient type, attach method, dates, code page) and embedded messages.
+// ===================================================================================================================
+
+interface CfbEntry { name: string; type: number; left: number; right: number; child: number; start: number; size: number }
+interface CfbFile { b: Uint8Array; ss: number; cutoff: number; fat: number[]; mini: number[]; miniData: Uint8Array; entries: CfbEntry[] }
+
+const CFB_END = 0xfffffffa;
+const CFB_NONE = 0xffffffff;
+const MSG_MAX_STREAM = 60000000;
+
+function cfbOpen(b: Uint8Array): CfbFile | null {
+  // The sector tables and the directory of a Compound File (null if it is none or damaged). Entries keep their index,
+  // which the sibling and child links refer to.
+  if (b.length < 512 || b[0] !== 0xd0 || b[1] !== 0xcf || b[2] !== 0x11 || b[3] !== 0xe0) return null;
+  const shift = shU16(b, 0x1e);
+  if (shift !== 9 && shift !== 12) return null;
+  const ss = 1 << shift;
+  const nFat = shU32(b, 0x2c);
+  const fatSecs: number[] = [];
+  for (let i = 0; i < 109 && fatSecs.length < nFat; i++) {
+    const s = shU32(b, 0x4c + i * 4);
+    if (s >= CFB_END) break;
+    fatSecs.push(s);
+  }
+  let difat = shU32(b, 0x44);
+  for (let guard = 0; difat < CFB_END && fatSecs.length < nFat && guard < 1000; guard++) {
+    const off = (difat + 1) * ss;
+    if (off + ss > b.length) break;
+    for (let i = 0; i < ss / 4 - 1 && fatSecs.length < nFat; i++) {
+      const s = shU32(b, off + i * 4);
+      if (s < CFB_END) fatSecs.push(s);
+    }
+    difat = shU32(b, off + ss - 4);
+  }
+  const fat: number[] = [];
+  for (let k = 0; k < fatSecs.length && fat.length < 4000000; k++) {
+    const off = (fatSecs[k] + 1) * ss;
+    for (let i = 0; i < ss / 4 && off + i * 4 + 3 < b.length; i++) fat.push(shU32(b, off + i * 4));
+  }
+  const entries: CfbEntry[] = [];
+  let sec = shU32(b, 0x30);
+  for (let guard = 0; sec < CFB_END && guard < 10000 && entries.length < 200000; guard++) {
+    const off = (sec + 1) * ss;
+    if (off + ss > b.length) break;
+    for (let e = 0; e < ss / 128; e++) {
+      const p = off + e * 128;
+      const nl = shU16(b, p + 0x40);
+      let nm = "";
+      for (let k = 0; k + 2 < nl && k < 64; k += 2) nm += String.fromCharCode(shU16(b, p + k));
+      entries.push({ name: nm, type: b[p + 0x42], left: shU32(b, p + 0x44), right: shU32(b, p + 0x48), child: shU32(b, p + 0x4c), start: shU32(b, p + 0x74), size: shU32(b, p + 0x78) });
+    }
+    sec = sec < fat.length ? fat[sec] : CFB_END;
+  }
+  if (entries.length === 0 || entries[0].type !== 5) return null;
+  const cf: CfbFile = { b: b, ss: ss, cutoff: shU32(b, 0x38) || 4096, fat: fat, mini: [], miniData: new Uint8Array(0), entries: entries };
+  // the mini FAT and the mini stream (the root entry's stream) for streams below the cutoff
+  let ms = shU32(b, 0x3c);
+  for (let guard = 0; ms < CFB_END && guard < 10000; guard++) {
+    const off = (ms + 1) * ss;
+    if (off + ss > b.length) break;
+    for (let i = 0; i < ss / 4; i++) cf.mini.push(shU32(b, off + i * 4));
+    ms = ms < fat.length ? fat[ms] : CFB_END;
+  }
+  cf.miniData = cfbChain(cf, entries[0].start, entries[0].size, false);
+  return cf;
+}
+
+function cfbChain(cf: CfbFile, start: number, size: number, mini: boolean): Uint8Array {
+  // the bytes of a sector chain (FAT sectors of the file, or mini sectors of the mini stream)
+  const src = mini ? cf.miniData : cf.b;
+  const secSize = mini ? 64 : cf.ss;
+  const table = mini ? cf.mini : cf.fat;
+  if (size > MSG_MAX_STREAM || size > src.length) size = Math.min(src.length, MSG_MAX_STREAM);
+  const out = new Uint8Array(size);
+  let sec = start, pos = 0;
+  for (let guard = 0; sec < CFB_END && pos < size && guard < 2000000; guard++) {
+    const off = mini ? sec * secSize : (sec + 1) * secSize;
+    const n = Math.min(secSize, size - pos);
+    if (off + n > src.length) break;
+    out.set(src.subarray(off, off + n), pos);
+    pos += n;
+    sec = sec < table.length ? table[sec] : CFB_END;
+  }
+  return pos === size ? out : out.subarray(0, pos);
+}
+
+function cfbStream(cf: CfbFile, e: CfbEntry): Uint8Array {
+  // the content of a stream entry
+  if (e.type !== 2) return new Uint8Array(0);
+  return cfbChain(cf, e.start, e.size, e.size < cf.cutoff);
+}
+
+function cfbChildren(cf: CfbFile, e: CfbEntry): CfbEntry[] {
+  // the entries directly inside a storage (its child tree, in no particular order)
+  const out: CfbEntry[] = [];
+  const stack: number[] = [e.child];
+  const seen = new Map<number, boolean>();
+  for (let guard = 0; stack.length > 0 && guard < 100000; guard++) {
+    const i = stack.pop() as number;
+    if (i >= cf.entries.length || i === CFB_NONE || seen.has(i)) continue;
+    seen.set(i, true);
+    const n = cf.entries[i];
+    if (n.type !== 1 && n.type !== 2) continue;
+    out.push(n);
+    stack.push(n.left);
+    stack.push(n.right);
+  }
+  return out;
+}
+
+function msgChild(kids: CfbEntry[], name: string): CfbEntry | null {
+  // the entry of a storage with the given name
+  for (const k of kids) if (k.name === name) return k;
+  return null;
+}
+
+function msgProps(cf: CfbFile, kids: CfbEntry[], header: number): Map<number, Uint8Array> {
+  // the fixed-length properties of a storage ("__properties_version1.0": a header, then 16-byte entries of tag, flags
+  // and value), keyed by the property tag
+  const out = new Map<number, Uint8Array>();
+  const e = msgChild(kids, "__properties_version1.0");
+  if (e === null) return out;
+  const d = cfbStream(cf, e);
+  for (let p = header; p + 16 <= d.length && out.size < 5000; p += 16) out.set(shU32(d, p), d.subarray(p + 8, p + 16));
+  return out;
+}
+
+function msgPropInt(props: Map<number, Uint8Array>, tag: number): number {
+  // a 32-bit property value (-1 if absent)
+  const v = props.get(tag);
+  return v === undefined ? -1 : shU32(v, 0);
+}
+
+function msgPropDay(props: Map<number, Uint8Array>, tag: number): number {
+  // a FILETIME property as a day (y * 372 + m * 31 + d, see headerDay), 0 if absent or implausible
+  const v = props.get(tag);
+  if (v === undefined) return 0;
+  const ms = (shU32(v, 4) * 4294967296 + shU32(v, 0)) / 10000 - 11644473600000;
+  if (!(ms > 0) || ms > 4102444800000) return 0;
+  const dt = new Date(ms);
+  return dt.getUTCFullYear() * 372 + (dt.getUTCMonth() + 1) * 31 + dt.getUTCDate();
+}
+
+function msgString(cf: CfbFile, kids: CfbEntry[], id: string, cp: number): string {
+  // a string property: the Unicode stream (type 001F) or the ANSI stream (001E, read with the message's code page)
+  const u = msgChild(kids, "__substg1.0_" + id + "001F");
+  if (u !== null) {
+    const d = cfbStream(cf, u);
+    let s = "";
+    for (let p = 0; p + 1 < d.length && p < 2000000; p += 2) s += String.fromCharCode(shU16(d, p));
+    return s.replace(/\u0000+$/, "");
+  }
+  const a = msgChild(kids, "__substg1.0_" + id + "001E");
+  if (a === null) return "";
+  const d = cfbStream(cf, a);
+  const s = cp === 65001 ? utf8Decode(d) : bytesToLatin1(d, 0, Math.min(d.length, 2000000));
+  return s.replace(/\u0000+$/, "");
+}
+
+function msgBinary(cf: CfbFile, kids: CfbEntry[], id: string): Uint8Array | null {
+  // a binary property stream (type 0102), null if absent
+  const e = msgChild(kids, "__substg1.0_" + id + "0102");
+  return e === null ? null : cfbStream(cf, e);
+}
+
+function msgAddress(name: string, addr: string, smtp: string): string {
+  // a header-like "Name <address>" of a sender or recipient: the SMTP address first, else an address with an "@"
+  const a = smtp.indexOf("@") > 0 ? smtp : addr.indexOf("@") > 0 ? addr : name.indexOf("@") > 0 ? name : "";
+  return a === "" ? "" : (name !== "" ? name.replace(/[<>,]/g, " ") + " " : "") + "<" + a + ">";
+}
+
+function lzfuDecompress(d: Uint8Array): string {
+  // compressed RTF (PR_RTF_COMPRESSED): the LZFu scheme with its fixed initial dictionary; "MELA" marks raw RTF
+  if (d.length < 16) return "";
+  const magic = shU32(d, 8);
+  if (magic === 0x414c454d) return bytesToLatin1(d, 16, Math.min(d.length, 16 + shU32(d, 4)));
+  if (magic !== 0x75465a4c) return "";
+  const init = "{\\rtf1\\ansi\\mac\\deff0\\deftab720{\\fonttbl;}{\\f0\\fnil \\froman \\fswiss \\fmodern \\fscript \\fdecor MS Sans SerifSymbolArialTimes New RomanCourier{\\colortbl\\red0\\green0\\blue0\r\n\\par \\pard\\plain\\f0\\fs20\\b\\i\\u\\tab\\tx";
+  const dict = new Uint8Array(4096);
+  for (let i = 0; i < init.length; i++) dict[i] = init.charCodeAt(i) & 0xff;
+  let wp = init.length;
+  const out: number[] = [];
+  const rawSize = Math.min(shU32(d, 4), 20000000);
+  let p = 16;
+  for (let guard = 0; p < d.length && out.length < rawSize && guard < 20000000; guard++) {
+    const ctrl = d[p++];
+    for (let bit = 0; bit < 8 && p < d.length && out.length < rawSize; bit++) {
+      if ((ctrl & (1 << bit)) === 0) {
+        const c = d[p++];
+        out.push(c);
+        dict[wp] = c;
+        wp = (wp + 1) & 4095;
+      } else {
+        if (p + 1 >= d.length) { p = d.length; break; }
+        const b1 = d[p++], b2 = d[p++];
+        const off = (b1 << 4) | (b2 >> 4);
+        const len = (b2 & 15) + 2;
+        if (off === wp) { p = d.length; break; }
+        for (let k = 0; k < len; k++) {
+          const c = dict[(off + k) & 4095];
+          out.push(c);
+          dict[wp] = c;
+          wp = (wp + 1) & 4095;
+        }
+      }
+    }
+  }
+  return bytesToLatin1(new Uint8Array(out), 0, out.length);
+}
+
+function utf8Encode(s: string): Uint8Array {
+  // the UTF-8 bytes of a string
+  const out: number[] = [];
+  for (let i = 0; i < s.length; i++) {
+    let c = s.charCodeAt(i);
+    if (c >= 0xd800 && c <= 0xdbff && i + 1 < s.length) {
+      const d = s.charCodeAt(i + 1);
+      if (d >= 0xdc00 && d <= 0xdfff) { c = 0x10000 + ((c - 0xd800) << 10) + (d - 0xdc00); i++; }
+    }
+    if (c < 0x80) out.push(c);
+    else if (c < 0x800) out.push(0xc0 | (c >> 6), 0x80 | (c & 63));
+    else if (c < 0x10000) out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+    else out.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 63), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+  }
+  return new Uint8Array(out);
+}
+
+function msgIsOutlook(b: Uint8Array): boolean {
+  // a Compound File whose root holds MAPI property streams (an Outlook item)
+  const cf = cfbOpen(b);
+  if (cf === null) return false;
+  for (const k of cfbChildren(cf, cf.entries[0])) if (k.name.indexOf("__substg1.0_") === 0 || k.name === "__properties_version1.0") return true;
+  return false;
+}
+
+function scanMsg(b: Uint8Array, name: string, depth: number, st: MailScan): boolean {
+  // An Outlook item attached as a file: scanned as an attached mail of its own (false = not an Outlook item; the caller
+  // keeps the file as an attachment then)
+  const cf = cfbOpen(b);
+  if (cf === null) return false;
+  const kids = cfbChildren(cf, cf.entries[0]);
+  let mapi = false;
+  for (const k of kids) if (k.name.indexOf("__substg1.0_") === 0 || k.name === "__properties_version1.0") mapi = true;
+  if (!mapi) return false;
+  if (depth > MAIL_MAX_DEPTH || ++st.parts > MAIL_MAX_PARTS) { st.dropped++; return true; }
+  st.container = true;
+  const prev = st.cur;
+  st.msgs.push({ subject: "", keywords: "", name: name !== "" ? name : "attached mail", seen: false, auto: "", from: "", to: "", env: "", day: 0, cc: "" });
+  st.cur = st.msgs.length - 1;
+  msgStorage(cf, kids, 32, depth, st);
+  st.cur = prev;
+  return true;
+}
+
+function msgStorage(cf: CfbFile, kids: CfbEntry[], header: number, depth: number, st: MailScan): void {
+  // the message in a storage (the root, or an embedded message's storage): headers, body texts and attachments
+  const m = st.msgs[st.cur];
+  const props = msgProps(cf, kids, header);
+  let cp = msgPropInt(props, 0x3fde0003);
+  if (cp < 0) cp = msgPropInt(props, 0x3ffd0003);
+  m.subject = msgString(cf, kids, "0037", cp).replace(/[\r\n]+/g, " ").trim();
+  m.keywords = "";
+  m.seen = true;
+  const from = msgAddress(msgString(cf, kids, "0C1A", cp), msgString(cf, kids, "0C1F", cp), msgString(cf, kids, "5D01", cp));
+  const rep = msgAddress(msgString(cf, kids, "0042", cp), msgString(cf, kids, "0065", cp), msgString(cf, kids, "5D02", cp));
+  m.from = mailAddresses(from !== "" ? from : rep, 1);
+  let to = "", cc = "";
+  for (const k of kids) {
+    if (k.type !== 1 || k.name.indexOf("__recip_version1.0_#") !== 0) continue;
+    const rk = cfbChildren(cf, k);
+    const rp = msgProps(cf, rk, 8);
+    const a = msgAddress(msgString(cf, rk, "3001", cp), msgString(cf, rk, "3003", cp), msgString(cf, rk, "39FE", cp));
+    if (a === "") continue;
+    if (msgPropInt(rp, 0x0c150003) === 2) cc += (cc === "" ? "" : ", ") + a;
+    else to += (to === "" ? "" : ", ") + a;
+  }
+  m.to = mailAddresses(to + "," + cc, 50);
+  m.cc = mailAddresses(cc, 50);
+  let day = msgPropDay(props, 0x00390040);
+  if (day === 0) day = msgPropDay(props, 0x0e060040);
+  if (day === 0) day = msgPropDay(props, 0x30070040);
+  m.day = day;
+  // the texts: plain text and HTML; compressed RTF only when neither exists (read as an RTF document)
+  const text = msgString(cf, kids, "1000", cp);
+  if (text.trim() !== "") addText(st, false, "utf-8", utf8Encode(text));
+  const html = msgBinary(cf, kids, "1013");
+  if (html !== null && html.length > 0) addText(st, true, cp === 65001 ? "utf-8" : "windows-1252", html);
+  if (text.trim() === "" && (html === null || html.length === 0)) {
+    const rtf = msgBinary(cf, kids, "1009");
+    const s = rtf === null ? "" : lzfuDecompress(rtf);
+    if (/^\s*\{\\rtf/.test(s)) addAtt(st, "body.rtf", "application/rtf", "", utf8Encode(s));
+  }
+  // the attachments: files by value (also PDFs and further Outlook items), embedded messages
+  for (const k of kids) {
+    if (k.type !== 1 || k.name.indexOf("__attach_version1.0_#") !== 0) continue;
+    const ak = cfbChildren(cf, k);
+    const ap = msgProps(cf, ak, 8);
+    const method = msgPropInt(ap, 0x37050003);
+    let an = msgString(cf, ak, "3707", cp);
+    if (an === "") an = msgString(cf, ak, "3704", cp);
+    const lname = an.toLowerCase();
+    if (method === 5) {
+      const sub = msgChild(ak, "__substg1.0_3701000D");
+      if (sub === null || sub.type !== 1) continue;
+      if (depth + 1 > MAIL_MAX_DEPTH || ++st.parts > MAIL_MAX_PARTS) { st.dropped++; continue; }
+      const prev = st.cur;
+      st.msgs.push({ subject: "", keywords: "", name: an !== "" ? an : "attached mail", seen: false, auto: "", from: "", to: "", env: "", day: 0, cc: "" });
+      st.cur = st.msgs.length - 1;
+      msgStorage(cf, cfbChildren(cf, sub), 24, depth + 1, st);
+      st.cur = prev;
+      continue;
+    }
+    const data = msgBinary(cf, ak, "3701");
+    if (data === null) continue;
+    if (data.length >= 4 && data[0] === 0x25 && data[1] === 0x50 && data[2] === 0x44 && data[3] === 0x46) {
+      if (st.pdfs.length < MAIL_MAX_PDFS) st.pdfs.push({ name: an, data: data });
+      else st.extraPdfs++;
+      continue;
+    }
+    if (MAIL_IGNORE_NAME.test(lname)) {
+      if (st.ignored.length < 200) st.ignored.push(an);
+      // (an inline picture of the HTML, by its content id or hidden flag, is no photo of an advice)
+      const inline = msgString(cf, ak, "3712", cp) !== "" || msgPropInt(ap, 0x7ffe000b) === 1;
+      if (/\.(?:jpe?g|jfif|png|gif|bmp|tiff?|heic|heif|webp)$/.test(lname)) {
+        if (!inline) st.photos++;
+        else if (data.length > 8000) st.pictures++;
+      }
+      continue;
+    }
+    if (data.length >= 512 && data[0] === 0xd0 && data[1] === 0xcf && data[2] === 0x11 && data[3] === 0xe0 && scanMsg(data, an, depth + 1, st)) continue;
+    const mime = msgString(cf, ak, "370E", cp).toLowerCase();
+    addAtt(st, an, lname.endsWith(".pdf") ? "application/pdf" : mime, "", data);
+  }
 }
 
 // ---- generated tables (encodings as Unicode code points, 0 = undefined) ----
