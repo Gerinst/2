@@ -8036,6 +8036,9 @@ const DED_LINKED = /(?:skonto|abzug|deductions?|rabatt|nachlass|discount|gebühr
 // a deduction noun right after the amount ("dabei 70,49 EUR Skonto abgezogen", "EUR 15.00 bank charges", "€409.82
 // settlement discount")
 const DED_NOUN_AFTER = /^\s?(?:EUR|€|CHF|USD|GBP)?\s?\)?\s?(?:skonto|rabatt|abzug|deductions?|nachlass|bankgebühren|bankgebühr|bankspesen|gebühren|gebühr|spesen|kürzung|einbehalt|gutschrift(?! auf| erfolgt| wird)|(?:(?:early |prompt )?(?:settlement |payment )|cash |trade |volume )?discount|bank charges|charges|fees?|withholding tax|quellensteuer)(?![a-zäöüß])/i;
+// a percentage deduction right before an amount ("abzüglich 2 % Skonto: 4.716,12 EUR", "less 2 % early payment discount
+// EUR 4,716.12"): the amount is the net or the deduction itself, which the arithmetic decides
+const PCT_DED_BEFORE = /\d{1,2}(?:[.,]\d{1,2})?\s?%\s+(?:[a-zäöüß-]+\s+){0,3}?(?:skonto|discount|rabatt|nachlass|abzug|deduction)\s*[:=]?\s*(?:(?:EUR|€|CHF|USD|GBP)\s*)?$/i;
 // the result of a computation in a sentence ("abzüglich 2 % Skonto, also 1.166,20 EUR", "= 1.166,20", "less discount, i.e.")
 const RESULT_WORD = /(?:^|[\s,;(])(?:also|somit|mithin|folglich|demnach|d\.\s?h\.|das sind|dies sind|das ergibt|ergibt sich|ergibt|ergeben|macht|insgesamt|zusammen|in summe|i\.\s?e\.|that is|which is|so|thus|hence|leaving|resulting in|net|netto|=)(?![a-zäöüß])/gi;
 // deduction wording of a sentence (prose arithmetic): a deduction word, or "1.190,00 EUR - 2 %" written as an operator
@@ -10873,7 +10876,7 @@ function proseRules(infos: LineInfo[], sents: ProseSent[], pairs: number[], unse
     // amounts of the window: value, deduction, result word before it (after a deduction word earlier in its sentence)
     const wl: number[] = [], wj: number[] = [], ws: number[] = [];
     const wv: number[] = [];
-    const wded: boolean[] = [], wres: boolean[] = [], wverb: boolean[] = [], wnot: boolean[] = [];
+    const wded: boolean[] = [], wres: boolean[] = [], wverb: boolean[] = [], wnot: boolean[] = [], wpct: boolean[] = [];
     for (const w of win) {
       const sw = sents[w];
       if (sw.li.length > 12) continue;
@@ -10898,6 +10901,9 @@ function proseRules(infos: LineInfo[], sents: ProseSent[], pairs: number[], unse
         wded.push(a.value < 0 || DED_LINKED.test(seg) || (DED_BEFORE.test(seg) && !(m > 0 && DED_NOUN_AFTER.test(seg)) && !/^\s?(?:EUR|€|CHF|USD|GBP)?\s*(?:an sie |auf ihr konto |to you |to your account )?(?:überwiesen|ueberwiesen|angewiesen|bezahlt|gezahlt|beglichen|ausgeglichen|transferred|remitted|paid)\b/i.test(post)) || (DED_NOUN_AFTER.test(post) && !PAY_VERB_BEFORE.test(seg)));
         wverb.push(PAY_VERB_BEFORE.test(seg));
         wres.push(res);
+        // a percentage deduction right before the amount ("less 2 % discount: EUR 4,716.12", "abzüglich 2 % Skonto
+        // 4.716,12 EUR"): the amount may be the net (the discount is given as a percentage) - the arithmetic decides
+        wpct.push(PCT_DED_BEFORE.test(seg));
       }
     }
     // percentages next to a deduction word ("abzüglich 2 % Skonto", "kürzen ... um 10 %"), not a VAT rate
@@ -10921,7 +10927,7 @@ function proseRules(infos: LineInfo[], sents: ProseSent[], pairs: number[], unse
     const nets: number[] = [];
     let netAt = -1, grossAt = -1, dedAt = -1, grossPrev = false;
     for (let x = 0; x < wv.length && hasDed; x++) {
-      if (ws[x] !== si || wded[x] || wv[x] <= 0 || wnot[x]) continue;
+      if (ws[x] !== si || (wded[x] && !wpct[x]) || wv[x] <= 0 || wnot[x]) continue;
       if (!asPay && !wres[x] && !(prevAdj && pay[si - 1])) continue;
       // (an open total followed by a smaller part payment of it is not paid: "ergibt 4.000,00 EUR, die wir in zwei Raten zahlen;
       // die erste Rate über 2.000,00 EUR haben wir heute überwiesen")
@@ -10948,8 +10954,11 @@ function proseRules(infos: LineInfo[], sents: ProseSent[], pairs: number[], unse
         for (let d = 0; d < wv.length && fit < 0; d++) if (wded[d] && d !== g && d !== x && Math.abs(gv - Math.abs(wv[d]) - wv[x]) < 0.015) fit = d;
         for (let d = 0; d < wv.length; d++) if (wded[d] && d !== g && d !== x) dsum += Math.abs(wv[d]);
         let otherFit = dsum > 0 && Math.abs(gv - dsum - wv[x]) < 0.015;
+        // (an amount after a percentage deduction counts as the net only when the percentage confirms it)
+        if (wded[x]) { fit = -1; otherFit = false; }
         for (const pc of pcts) if (Math.abs(gv * (1 - pc / 100) - wv[x]) < 0.015) otherFit = true;
         if (fit < 0 && !otherFit) continue;
+        if (wded[x]) wded[x] = false;
         let seen = false;
         for (const v of nets) if (Math.abs(v - wv[x]) < 0.005) seen = true;
         if (!seen) nets.push(wv[x]);
