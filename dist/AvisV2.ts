@@ -1545,6 +1545,22 @@ function noteMailHeaders(st: MailScan, h: MimeHead): void {
   // the day the mail was written ("Date: Fri, 30 Oct 2026 15:52:16 +0100")
   const dm = /\b(\d{1,2})\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{4})\b/i.exec(h.fields.get("date") || "");
   if (dm !== null) m.day = parseInt(dm[3], 10) * 372 + ("janfebmaraprmayjunjulaugsepoctnovdec".indexOf(dm[2].toLowerCase()) / 3 + 1) * 31 + parseInt(dm[1], 10);
+  // (German month names, "Do, 29 Okt 2026"; no Date header, or one far from the day the mailbox's server took the mail, a
+  // mailer's dummy "Thu, 01 Jan 1970" or a wrong year: the day of the top Received line counts)
+  if (m.day === 0) m.day = headerDay(h.fields.get("date") || "");
+  const rv = h.fields.get("received") || "";
+  const rd = headerDay(rv.substring(rv.lastIndexOf(";") + 1));
+  if (rd > 0 && (m.day === 0 || Math.abs(m.day - rd) > 7)) m.day = rd;
+}
+
+function headerDay(v: string): number {
+  // the day of a header date with English or German month names ("Thu, 29 Oct 2026", "Do, 29 Okt 2026") as y * 372 + m *
+  // 31 + d, 0 if none
+  const d = /\b(\d{1,2})\s+(jan|feb|mar|mär|mrz|apr|may|mai|jun|jul|aug|sep|oct|okt|nov|dec|dez)[a-zä]*\.?\s+(\d{4})\b/i.exec(v);
+  if (d === null) return 0;
+  const k = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec", "mär", "mrz", "mai", "okt", "dez"].indexOf(d[2].toLowerCase());
+  const mo = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 3, 3, 5, 10, 12];
+  return k < 0 ? 0 : parseInt(d[3], 10) * 372 + mo[k] * 31 + parseInt(d[1], 10);
 }
 
 function mailAddresses(v: string, max: number): string {
@@ -7206,6 +7222,9 @@ const HK_LAND = /\bHong Kong\b/;
 // the one in the payee's currency, not what the payer sent or converted
 // (also "Recipient gets", "Nordwerk GmbH gets", "Empfänger erhält" in a money transfer service's confirmation)
 const RECIPIENT_GETS = /(?:\b(?:recipient|receiver|beneficiary|payee|they|empfänger(?:in)?|zahlungsempfänger|begünstigte[rn]?)|\b(?:gmbh|ag|ltd|limited|inc|llc|plc|kg|se|bv|nv|sarl|sas|srl|spa)\.?)\s+(?:gets|get|receives|receive|will receive|erhält|bekommt)\s*:?\s*$|\b(?:gets|receives|will receive|is receiving|erhält|bekommt)\s*:?\s*$/i;
+// the amount an escrow or payment service released, the whole label ("Amount released:", "Net amount released", "Released
+// amount"; not "Amount released for payment", an approval)
+const RELEASED_LABEL = /^\s*(?:(?:net|total)\s+)?(?:amount|funds|sum)\s+released\b(?!\s+for\b)[^a-z]*$|^\s*released\s+amount\b[^a-z]*$/i;
 // an exchange rate or a conversion in a document: its amounts in two currencies are one payment converted
 const FX_LINE = /exch(?:ange)?\.? ?rate|\bfx\b|wechselkurs|umrechnungskurs|\bkurs\b|conversion rate|converted (?:at|to|into)|equivalent|gegenwert|countervalue|\d\s?[A-Z]{3}\s?=\s?\d/i;
 // the currency in which a document says the transfer itself was made ("Payment method   SEPA credit transfer (EUR)",
@@ -7652,7 +7671,7 @@ const FUTURE_SENT = /\b(?:werden|wird|will|shall)\b|nächste|naechste|kommende|k
 const FUTURE_SENT_AUX = /\b(?:werden|wird|will|shall)\b/i;
 // the same without the auxiliaries: a payment put off to later ("nach Klärung", "sobald", "nächste Woche", "in zwei weiteren
 // Raten", "in two further instalments")
-const FUTURE_POSTPONE = /nächste|naechste|kommende|künftig|später|sobald|\bweitere[nr]? (?:raten|teilzahlungen)\b|\bfurther instal(?:l)?ments?\b|\bnach (?:klärung|eingang|prüfung|erhalt|abschluss|behebung|austausch)|\bnext\b|\blater\b|\bonce\b|\bupon\b|\bnach (?:abnahme|freigabe|lieferung|wareneingang|fertigstellung|montage|inbetriebnahme|vorlage|zugang|korrektur)|\bafter (?:the )?(?:goods|delivery|acceptance|approval|receipt|inspection|arrival|correction)|\bbeabsichtigen\b|\bintend to\b|\bplanen\b|\bin der \d{1,2}\.(?:\s?(?:kw|kalenderwoche)\b|\s*$)|\b(?:kw|kalenderwoche) ?\d{1,2}\b|\bin (?:calendar )?week \d{1,2}\b/i;
+const FUTURE_POSTPONE = /nächste|naechste|kommende|künftig|später|sobald|\bweitere[nr]? (?:raten|teilzahlungen)\b|\bfurther instal(?:l)?ments?\b|\bnach (?:(?:ihrer|ihrem|unserer|unserem|der|dem|erfolgter|erfolgtem)\s+)?(?:klärung|eingang|prüfung|erhalt|abschluss|behebung|austausch)|\bnext\b|\blater\b|\bonce\b|\bupon\b|\bnach (?:(?:ihrer|ihrem|unserer|unserem|der|dem|erfolgter|erfolgtem)\s+)?(?:abnahme|freigabe|lieferung|wareneingang|fertigstellung|montage|inbetriebnahme|vorlage|zugang|korrektur)|\bafter (?:(?:the|your|our)\s+)?(?:goods|delivery|acceptance|approval|receipt|inspection|arrival|correction|commissioning|installation|review)|\bbeabsichtigen\b|\bintend to\b|\bplanen\b|\bin der \d{1,2}\.(?:\s?(?:kw|kalenderwoche)\b|\s*$)|\b(?:kw|kalenderwoche) ?\d{1,2}\b|\bin (?:calendar )?week \d{1,2}\b/i;
 // "bereits / zuvor / earlier" that belongs to a reference to earlier talks, not to the payment ("wie zuvor telefonisch
 // besprochen", "wie bereits mitgeteilt", "as advised in our earlier e-mail")
 const PRIOR_ASIDE = /\b(?:wie|as)\s+(?:[a-zäöüß-]+\s+){0,4}?(?:mitgeteilt|besprochen|vereinbart|angekündigt|avisiert|informiert|advised|mentioned|discussed|agreed|notified|informed|stated|indicated)\b|\b(?:in|per|with|mit|laut|lt)\s+(?:our\s+|unserer?\s+|unserem\s+|the\s+|der\s+|dem\s+)?(?:earlier|previous|vorherigen|früheren|letzten)\s+(?:e-?mail|mail|letter|schreiben|nachricht|telefonat)/gi;
@@ -7803,11 +7822,12 @@ const TAX_REFUND = /steuer-?(?:rück)?erstattung|(?:^|[^a-zäöüß])ust-?erstat
 // the reader made twice or too much ("erstatten wir Ihnen das Guthaben aus der Gutschrift", "haben wir das Guthaben von
 // 2.283,51 EUR ... überwiesen", "haben wir Ihnen ... zurückgezahlt", "we have today refunded the duplicate payment", "we
 // have today returned the overpaid amount", "Credit balance refunded"; not a balance offset or considered, "das Guthaben
-// ... haben wir berücksichtigt und den Restbetrag ... überwiesen"); REFUND_OF names what comes back
+// ... haben wir berücksichtigt und den Restbetrag ... überwiesen"); REFUND_OF names what comes back (also the reader's
+// advance payment for an order cancelled: "We have today refunded the advance payment less the agreed cancellation charge")
 const REFUND_PAID = /\berstatten wir (?:ihnen )?(?:das|ihr|den|die)\b|\b(?:das|ihr|dieses|ein) guthaben\b(?:(?!verrechn|abgezogen|abzüglich|abzgl|berücksichtig|angerechnet|aufgerechnet|gegengerechnet|in abzug|einbehalten|gekürzt|abgesetzt)[^.!?\n]){0,120}?(?:^|[^a-zäöüß])(?:überwiesen|ausgezahlt|erstattet|zurücküberwiesen)(?![a-zäöüß])|\b(?:wir haben|haben wir)\b[^.!?\n]{0,120}?(?:^|[^a-zäöüß])(?:zurückerstattet|rückerstattet|zurücküberwiesen|zurückgezahlt|rückgezahlt)(?![a-zäöüß])|\bwe(?: have|['\u2019]ve)? (?:(?:today|now|also|already|therefore) )*(?:refunded|repaid|reimbursed|returned (?:the |your |this )?(?:over-?paid |excess |duplicate |double )?(?:amount|payment|overpayment|sum|balance|money|funds|difference))\b|\b(?:has|have) been (?:refunded|repaid|reimbursed)\b|\b(?:credit balance|overpayment|duplicate payment|double payment) (?:has been |was )?(?:refunded|repaid|returned)\b|\brefund (?:of )?(?:the |your |a )?(?:duplicate|double|over)[ -]?payment\b(?! to (?:us|our)\b)/i;
 // the writer asks for money back ("Could you please refund the duplicate payment", "bitte erstatten Sie"): no refund paid
 const REFUND_ASKED = /\b(?:please|kindly|could you|can you|would you)\s+(?:[a-z]+\s+)?(?:refund|reimburse|repay|return)\b|\bbitte\b[^.!?\n]{0,60}(?:erstatten|zurücküberweisen|zurückzahlen)|\berstatten sie\b/i;
-const REFUND_OF = /guthaben|unsere[rn]? gutschrift|aus der gutschrift|credit balance|our credit note|doppelzahlung|doppelt (?:bezahlt|gezahlt|überwiesen)|zweimal (?:bezahlt|gezahlt|überwiesen)|überzahlung|zu viel (?:bezahlt|gezahlt|überwiesen)|duplicate payment|double payment|paid twice|overpayment|overpaid/i;
+const REFUND_OF = /guthaben|unsere[rn]? gutschrift|aus der gutschrift|credit balance|our credit note|doppelzahlung|doppelt (?:bezahlt|gezahlt|überwiesen)|zweimal (?:bezahlt|gezahlt|überwiesen)|überzahlung|zu viel (?:bezahlt|gezahlt|überwiesen)|duplicate payment|double payment|paid twice|overpayment|overpaid|anzahlung|vorauszahlung|vorkasse|advance payment|pre-?payment|down[- ]payment/i;
 // a credit of the writer with the reader and the writer's own account as the destination of a payout ("Gutschrift",
 // "Gutschriftsbetrag", "credit note", "credit balance", "Guthaben"; "auf unser Konto", "to our account")
 const CREDIT_CLAIM = /gutschrift|guthaben|credit note|credit balance|credit memo|überzahlung|overpayment|erstattung|refund|rückzahlung/i;
@@ -8181,6 +8201,9 @@ function segmentLabel(seg: string, extra: RegExp | null, afterAmount: boolean): 
   // a notice that a third party paid the reader labels its amount, also on the next line ("... hat Ihnen eine Zahlung
   // gesendet" above "4.422,39 €")
   if (NOTICE_PAID.test(s) || RECIPIENT_GETS.test(s)) { lab.strong = true; lab.payment = true; lab.neg = false; }
+  // the amount an escrow or payment service released to the reader ("Amount released:   €18,327.90"; not "released for
+  // payment")
+  if (RELEASED_LABEL.test(s)) { lab.strong = true; lab.payment = true; lab.neg = false; }
   // a limit or an account balance ("Tageslimit Echtzeitüberweisung", "Available balance after this payment")
   if (LIMIT_BALANCE.test(s)) { lab.payment = false; lab.strong = false; lab.weak = false; lab.neg = true; }
   if (extra !== null && extra.test(s)) { lab.strong = true; lab.payment = true; }
@@ -10061,8 +10084,9 @@ function classifyDocument(infos: LineInfo[], heights: number[] | null): DocInfo 
   // beglichen")
   else if (otherT !== "" && !(otherWeak && payerDone) && !(otherSent && payerDone)) { doc.kind = "other"; doc.why = "'" + otherT + "' - not a payment advice?"; }
   else if (otherT !== "" && otherWeak && payerDone && !adviceT && /lieferschein|delivery note/i.test(otherT)) doc.cited = otherT;
-  // the payee writes about money it received (without an advice title): not an advice
-  else if (PAYEE_VIEW.test(plain.split(/[.\n]/).filter((x) => !REFUND_WORD.test(x)).join(".")) || PAYEE_SECOND.test(plain.replace(/\s*\n\s*/g, " ").split(".").filter((x) => !REFUND_WORD.test(x)).join("."))) { doc.kind = "other"; doc.received = true; doc.why = "payee's letter about a received payment - not a payment advice?"; }
+  // the payee writes about money it received (without an advice title): not an advice (not a collecting agent that pays
+  // the debtor's money on to the reader, debtorPassedOn)
+  else if ((PAYEE_VIEW.test(plain.split(/[.\n]/).filter((x) => !REFUND_WORD.test(x)).join(".")) || PAYEE_SECOND.test(plain.replace(/\s*\n\s*/g, " ").split(".").filter((x) => !REFUND_WORD.test(x)).join("."))) && !debtorPassedOn(plain, flowOwn)) { doc.kind = "other"; doc.received = true; doc.why = "payee's letter about a received payment - not a payment advice?"; }
   // the reader paid ("Sie haben uns ... überwiesen", "you paid") and the writer states no payment of its own
   else if (!payerDone && !creditAdvT && (YOU_PAID.test(plain) || YOU_PAID_EN.test(plain))) { doc.kind = "other"; doc.received = true; doc.why = "payee's letter about a received payment - not a payment advice?"; }
   else if (!payerDone && !creditAdvT && PAYEE_RECEIVED.test(plain)) { doc.kind = "other"; doc.received = true; doc.why = "payee's letter about a received payment - not a payment advice?"; }
@@ -10799,6 +10823,185 @@ function laterDayIn(sn: string, raw: string, docDay: number): string {
   return "";
 }
 
+// a date for laterPayDay(): "13.11.2026", "13/11/2026" (or "11/13/2026" in a document with American dates), "13.11." (year
+// of the mail), "2026-11-13", "13 November 2026", "13. Nov. 2026", "November 13, 2026"
+const LATER_DATE_G = /\b(\d{1,2})([.\/])(\d{1,2})\2(\d{4})\b|\b(\d{1,2})\.(\d{1,2})\.(?!\d)|\b(\d{4})-(\d{2})-(\d{2})\b|\b(\d{1,2})(?:st|nd|rd|th)?\.? (jan|feb|mar|mär|apr|may|mai|jun|jul|aug|sep|oct|okt|nov|dec|dez)[a-zä]*\.?,? (\d{4})\b|\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.? (\d{1,2})(?:st|nd|rd|th)?,? (\d{4})\b/gi;
+// what names the date right after it as the day of a payment, read with the spaces of the text joined: a payment run ("mit
+// unserem Zahllauf am", "Zahllauf vom", "check run on"), a date field ("Ausführungsdatum", "Planned payment date", "Run
+// date", "Expected payout date", "Valuta", "for value date"), a schedule ("scheduled for payment on", "planned for"), a
+// payment verb ("will be paid by bank transfer on"), a payment noun with a future or present verb ("Die Zahlung erfolgt
+// zum Fälligkeitstermin am", "Die Gutschrift ... erfolgt voraussichtlich am", "Payment will be made on") and a payer's
+// future ("we will pay ... on", "überweisen wir am")
+const PAYDAY_BEFORE = /(?:zahllauf|zahlungslauf|payments? run|pay run|check run|cheque run)(?: (?:am|vom|zum|on|of|dated|for))? ?(?:: ?)?$|(?:payment|pay|payout|disbursement|value|execution|run|transfer|remittance) date ?(?:: ?)?$|(?:zahlungs|zahl|ausführungs|auszahlungs|überweisungs|valuta|wertstellungs)datum ?(?:: ?)?$|(?:zahlungs|ausführungs|auszahlungs|überweisungs)termin ?(?:: ?)?$|(?:^|[^a-zäöüß])(?:valuta|wertstellung)(?: (?:am|vom|zum|per))? ?(?:: ?)?$|\b(?:scheduled|planned|intended|geplant|vorgesehen|vorgemerkt|terminiert|eingeplant) (?:for )?(?:(?:payment|release|transfer|execution|value|ausführung|zahlung) )?(?:on|am|zum|für den|für|for|by|bis zum) ?$|(?:^|[^a-zäöüß])(?:paid|transferred|remitted|wired|disbursed|credited|überwiesen|bezahlt|ausgezahlt|gezahlt|beglichen|gutgeschrieben|angewiesen) (?:[a-zäöüß-]+ ){0,4}?(?:on|am|zum) ?$|(?:^|[^a-zäöüß])(?:zahlung|überweisung|auszahlung|gutschrift|ausführung|payment|transfer|payout|remittance|disbursement)(?:en|s)?\b(?:[^.!?]|\.(?=\d)){0,40}?\b(?:erfolgt|erfolgen|wird|werden|will|shall)\b(?:[^.!?]|\.(?=\d)){0,60}?\b(?:am|zum|on|by) ?$|\b(?:will|shall|wir werden|werden wir|are going to|we|wir)(?: [a-zäöüß-]+){0,2}? (?:pay|paying|transfer|transferring|remit|remitting|wire|wiring|settle|settling|release|überweisen|bezahlen|zahlen|begleichen)\b(?:[^.!?]|\.(?=\d)){0,60}?\b(?:on|am|zum|by) ?$|(?:^|[^a-zäöüß])(?:überweisen|bezahlen|zahlen|begleichen) wir\b(?:[^.!?]|\.(?=\d)){0,60}?\b(?:am|zum) ?$/i;
+// a German future with the payment verb after the date ("Der Auszahlungsbetrag wird ... am 09.11.2026 ... überwiesen")
+const PAYDAY_WILL = /\b(?:wird|werden|soll|sollen)\b(?:[^.!?]|\.(?=\d)){0,80}?\b(?:am|zum|ab dem|ab) ?$/i;
+const PAYDAY_VERB_AFTER = /^(?:[^.!?]|\.(?=\d)){0,80}?(?:^|[^a-zäöüß])(?:überwiesen|bezahlt|ausgeführt|ausgezahlt|gezahlt|beglichen|angewiesen|gutgeschrieben)(?![a-zäöüß])/i;
+// a payment set for the date ("ist für den 20.11.2026 vorgemerkt")
+const PAYDAY_FOR = /\b(?:für den|für|for|am|zum) ?$/i;
+const PAYDAY_SET_AFTER = /^ ?(?:[a-zäöüß]+ ){0,3}?(?:vorgemerkt|vorgesehen|geplant|terminiert|eingeplant)(?![a-zäöüß])/i;
+// the header of a column of payment days
+const PAYDAY_COLUMN = /^(?:valuta|valutadatum|wertstellung|wertstellungsdatum|value ?date|payment ?date|pay ?date|zahlungsdatum|zahldatum|ausführungsdatum|execution ?date|run ?date|payout ?date|auszahlungsdatum|überweisungsdatum|transfer ?date)$/i;
+// a rest or a later instalment beside the payment ("Den Restbetrag überweisen wir am 20.11.2026", "the balance ... on")
+const PAYDAY_REST = /\b(?:rest|restbetrag|restzahlung|restliche[nrs]?|verbleibende[nrs]?|schlussrate|schlusszahlung|remaining|remainder|balance|outstanding)\b|\b(?:nächste|zweite|dritte|weitere|letzte|next|second|third|final|further)[nr]? (?:rate|teilzahlung|instal{1,2}ments?)\b/i;
+// the writer's own payment in English words in the future or the present ("we will wire the EUR 6,240.00 tomorrow morning",
+// "we are paying invoices ...", "we pay invoices ..."): payment wording, as German "überweisen wir" or "werden wir ...
+// überweisen" (adviceEvidence)
+const PAY_PROMISE = /\b(?:we|i)(?:['’]ll| will| shall| are going to|['’]re| are| am|['’]m)? (?:(?:now|then|also|today|tomorrow|shortly|soon|hereby) )?(?:pay(?:ing)?|remit(?:ting)?|wir(?:e|ing)|transfer(?:ring)?|settl(?:e|ing))\b(?! (?:attention|tribute|a visit|interest|you a visit)\b)/i;
+// a payment of the writer made now in words the other payer statements leave out: the English present continuous ("We are
+// paying invoices ... with value date November 2, 2026", "we are transferring EUR ..."), the German present in the usual
+// word order ("wir überweisen Ihnen ... 12.041,29 EUR mit Valuta 02.11.2026", as "überweisen wir"; not a habit or a payment
+// term: "wir zahlen wie gewohnt bei Fälligkeit"), a wired instalment ("we have today wired the second instalment of USD
+// 4,166.67") and invoices in today's payment run ("sind im heutigen Zahllauf enthalten", "are included in today's payment
+// run")
+const PAYER_NOW = /\bwe(?:['’]re| are) (?:(?:now|today|hereby|also) )?(?:paying|remitting|transferring|wiring|settling)(?: you)? (?:(?:the|our|your|both|all|these|those|two|three|following|outstanding|open|above|attached|listed) )*(?:invoices?|inv\b|bills?|(?:eur|usd|gbp|chf|aud|cad) ?\d|[€$£] ?\d|\d[\d.,']*\d ?(?:eur|usd|gbp|chf|€))(?!(?:[^.!?]|\.(?=\d)){0,80}?(?:\bback\b|\brefund))|\bwe (?:(?:hereby|now|today) )?(?:pay|remit|transfer|wire|settle)(?: you)? (?:(?:the|our|your|both|these|two|three|following|outstanding|open|above|attached|listed) )*(?:invoices? (?:no\.? |#)?(?=[a-z0-9\/-]{0,30}\d)[a-z0-9]{1,8}(?:[-\/][a-z0-9]{1,8}){0,4}|inv\b|(?:eur|usd|gbp|chf|aud|cad) ?\d|[€$£] ?\d|\d[\d.,']*\d ?(?:eur|usd|gbp|chf|€))(?!(?:[^.!?]|\.(?=\d)){0,80}?(?:within|usually|normally|generally|always|as a rule|on receipt|upon receipt|when due|due date|\bnet \d|\d+ days|in accordance with|according to|terms|\bonly\b|\buntil\b|\bback\b|\brefund))|(?:^|[^a-zäöüß])wir (?:(?:heute|hiermit|ihnen|nun|jetzt) )*(?:überweisen|bezahlen|zahlen|begleichen)(?![a-zäöüß])(?!(?:[^.!?]|\.(?=\d)){0,80}?(?:unabhängig|vereinbarten fälligkeit|fristgerecht|bei fälligkeit|nach fälligkeit|wie gewohnt|innerhalb|binnen|in der regel|grundsätzlich|immer|stets|ausschließlich|\bnur\b|generell|üblicherweise|normalerweise|\berst\b|zurück(?![a-zäöüß])))(?=(?:[^.!?]|\.(?=\d)){0,80}?(?:rechnung|betrag|\d[\d.,']*\d ?(?:eur|€|chf|usd)|(?:eur|€|chf|usd) ?\d))|\bwe(?: have|['’]ve)? (?:(?:just|today|now|also|already) )?(?:wired|paid|transferred|remitted|sent) (?:you )?(?:the|our|an?) (?:(?:first|second|third|fourth|fifth|final|last|next|agreed|\d+(?:st|nd|rd|th)) )?(?:instal{1,2}ment|tranche|part payment|partial payment|down payment|deposit|advance payment)\b(?: of)?|\b(?:ist|sind) (?:(?:heute|bereits|auch) )?(?:im|in unserem|in unseren) heutigen (?:zahllauf|zahlungslauf) (?:enthalten|berücksichtigt|aufgenommen)(?![a-zäöüß])|\b(?:ist|sind) heute im (?:zahllauf|zahlungslauf) (?:enthalten|berücksichtigt)(?![a-zäöüß])|\b(?:is|are|was|were|has been|have been) (?:(?:also|now) )?included in (?:our |the )?today['’]?s (?:payment|pay|bacs|ach|check|cheque|wire) run\b/i;
+// a rest of an invoice held back ("The balance of £3,731.20 is held back until ...", "den Restbetrag von 3.731,20 EUR
+// behalten wir bis zur Abnahme ein") and the words that name a rest
+const REST_KEPT = /(?:balance|remainder|remaining (?:amount|balance)|restbetrag|restzahlung|verbleibende[nr]? (?:rest)?betrag)(?:[^.!?]|\.(?=\d)){0,80}?(?:held back|withheld|retained|kept back|einbehalten|zurückbehalten|zurückgehalten|behalten wir)(?![a-zäöüß])/i;
+const REST_SUBJECT = /\b(?:balance|remainder|restbetrag|restzahlung|(?:den|der|the) rest)(?![a-zäöüß])/i;
+// the writer's own payment put off to a later time in words that laterPayment() leaves out ("wir überweisen die 2.450,00
+// EUR nächste Woche", "we will wire it next week", "we are transferring the EUR 2,450.00 next week")
+const OWN_PAY = new RegExp(PAY_PROMISE.source + "|(?:^|[^a-zäöüß])wir (?:[a-zäöüß]+ )?(?:überweisen|bezahlen|zahlen|begleichen)(?![a-zäöüß])", "i");
+
+function laterPayDay(raw: string, day: number): string {
+  // a day of payment in raw more than eight days after the day of the mail (day, as y * 372 + m * 31 + d): the run,
+  // execution, value or payout date of a payment ("mit unserem Zahllauf am 13.11.2026", "Ausführungsdatum 20.11.2026",
+  // "Planned payment date 20/11/2026", "scheduled for payment on 12/04/2026" in a document with American dates, "will be
+  // paid by bank transfer on 20 November 2026", "Die Zahlung erfolgt zum Fälligkeitstermin am 27.11.2026", "ist für den
+  // 20.11.2026 vorgemerkt", a "Valuta" column whose rows all name the run's day): the date with the words before it, ""
+  // if none (not a rest or a later instalment named beside the payment: "Den Restbetrag überweisen wir am 20.11.2026"),
+  // and none when another day of payment lies before or near the mail (parts of one advice with their value dates:
+  // "Teilzahlung 1 – Wertstellung 30.10.2026", "Teilzahlung 2 – Wertstellung 27.11.2026")
+  if (day <= 0 || raw.length === 0) return "";
+  const us = usDateOrder(raw);
+  LATER_DATE_G.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  let found = "";
+  let any = false, near = false;
+  for (let g = 0; g < 80 && !near && (m = LATER_DATE_G.exec(raw)) !== null; g++) {
+    const dn = dateDayOf(m, us, day);
+    if (dn <= 0) continue;
+    const before = raw.substring(Math.max(0, m.index - 100), m.index).replace(/\s+/g, " ");
+    const after = raw.substring(m.index + m[0].length, m.index + m[0].length + 100).replace(/\s+/g, " ");
+    if (!PAYDAY_BEFORE.test(before) && !(PAYDAY_WILL.test(before) && PAYDAY_VERB_AFTER.test(after)) && !(PAYDAY_FOR.test(before) && PAYDAY_SET_AFTER.test(after))) {
+      if (laterThan(dn, day)) any = true;
+      continue;
+    }
+    // (the sentence of the date)
+    const sb = before.split(/[.!?] /);
+    const sa = after.split(/[.!?](?: |$)/);
+    if (PAYDAY_REST.test(sb[sb.length - 1] + " " + m[0] + sa[0])) continue;
+    if (!laterThan(dn, day)) { near = true; continue; }
+    any = true;
+    if (found !== "") continue;
+    // (the words of the field or phrase before the date in its line or cell, after any number: "Ausführungsdatum
+    // 20.11.2026")
+    const segs = raw.substring(Math.max(0, m.index - 100), m.index).replace(/\s+$/, "").split(/\n|\s{2,}/);
+    const words = (segs[segs.length - 1].trim() !== "" ? segs[segs.length - 1] : before).trim().split(/\s+/);
+    let w = Math.max(0, words.length - 4);
+    for (let k = w; k < words.length; k++) if (/\d/.test(words[k])) w = k + 1;
+    const lead = words.slice(w).join(" ").replace(/^[^A-Za-zÄÖÜäöüß]+/, "");
+    found = shortQuote((lead !== "" ? lead + " " : "") + m[0]);
+  }
+  LATER_DATE_G.lastIndex = 0;
+  if (near) return "";
+  return found !== "" || !any ? found : laterColumn(raw, day, us);
+}
+
+function paidBeside(infos: LineInfo[], v: number, end: number): boolean {
+  // another amount than v before line end is labelled as a payment ("Total paid £5,000.00", "Paid This Remittance")
+  for (let i = 0; i < end && i < infos.length; i++) {
+    const inf = infos[i];
+    if (inf.quoted || inf.copy) continue;
+    for (let j = 0; j < inf.amounts.length; j++) if (inf.labels[j].payment && inf.labels[j].strong && !inf.labels[j].neg && !inf.labels[j].ded && inf.amounts[j].value > 0 && Math.abs(inf.amounts[j].value - v) >= 0.005) return true;
+  }
+  return false;
+}
+
+function laterColumn(raw: string, day: number, us: boolean): string {
+  // a column of payment days ("Valuta", "Value date", "Zahlungsdatum") whose rows all name a day more than eight days
+  // after the day of the mail: its header and first date ("Valuta 13.11.2026"), "" if none
+  const ls = raw.split("\n");
+  for (let i = 0; i < ls.length && i < 400; i++) {
+    const head = ls[i].trim().split(/\s{2,}/);
+    if (head.length < 3) continue;
+    let k = -1;
+    for (let c = 0; c < head.length; c++) if (PAYDAY_COLUMN.test(head[c])) k = c;
+    if (k < 0) continue;
+    let later = 0, near = 0;
+    let quote = "";
+    for (let j = i + 1; j < ls.length && j < i + 200; j++) {
+      const cells = ls[j].trim().split(/\s{2,}/);
+      if (cells.length < 2) break;
+      const cell = cells.length === head.length ? cells[k] : k === head.length - 1 ? cells[cells.length - 1] : "";
+      LATER_DATE_G.lastIndex = 0;
+      const dm = LATER_DATE_G.exec(cell);
+      LATER_DATE_G.lastIndex = 0;
+      if (dm === null || dm.index !== 0) continue;
+      const dn = dateDayOf(dm, us, day);
+      if (dn <= 0) continue;
+      if (laterThan(dn, day)) { later++; if (quote === "") quote = head[k] + " " + dm[0]; } else near++;
+    }
+    if (later > 0 && near === 0) return quote;
+  }
+  return "";
+}
+
+function usDateOrder(raw: string): boolean {
+  // the slash dates of raw are American (month first): one of them has a number above 12 in second place ("10/30/2026")
+  // and none in first place
+  const re = /\b(\d{1,2})\/(\d{1,2})\/\d{4}\b/g;
+  let us = false, eu = false;
+  let m: RegExpExecArray | null;
+  for (let g = 0; g < 200 && (m = re.exec(raw)) !== null; g++) {
+    if (parseInt(m[2], 10) > 12 && parseInt(m[1], 10) <= 12) us = true;
+    if (parseInt(m[1], 10) > 12) eu = true;
+  }
+  return us && !eu;
+}
+
+function laterThan(dn: number, day: number): boolean {
+  // the day dn lies more than eight calendar days after day (both y * 372 + m * 31 + d): a payment beyond the next week,
+  // not the value date of an advice sent a few working days ahead ("Valuta 04.11.2026" in a mail of 28.10.2026)
+  const y1 = Math.floor((dn - 32) / 372), y0 = Math.floor((day - 32) / 372);
+  const m1 = Math.floor((dn - y1 * 372 - 1) / 31), m0 = Math.floor((day - y0 * 372 - 1) / 31);
+  const d1 = Date.UTC(y1, m1 - 1, dn - y1 * 372 - m1 * 31), d0 = Date.UTC(y0, m0 - 1, day - y0 * 372 - m0 * 31);
+  return d1 - d0 > 8 * 86400000;
+}
+
+function dateDayOf(m: RegExpExecArray, us: boolean, day: number): number {
+  // the day (y * 372 + m * 31 + d) of a date matched by LATER_DATE_G, 0 if it is none; a date without a year ("13.11.")
+  // lies in the year of day, or in the next one when it would be more than half a year before day
+  const months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec", "mär", "mai", "okt", "dez"];
+  const monthNo = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 3, 5, 10, 12];
+  let d = 0, mo = 0, y = 0;
+  if (m[1] !== undefined) {
+    const a = parseInt(m[1], 10), b = parseInt(m[3], 10);
+    y = parseInt(m[4], 10);
+    if (m[2] === "/" && (us || b > 12) && a <= 12) { mo = a; d = b; } else { d = a; mo = b; }
+  } else if (m[5] !== undefined) {
+    d = parseInt(m[5], 10);
+    mo = parseInt(m[6], 10);
+    y = Math.floor((day - 32) / 372);
+    if (y * 372 + mo * 31 + d < day - 186) y++;
+  } else if (m[7] !== undefined) {
+    y = parseInt(m[7], 10);
+    mo = parseInt(m[8], 10);
+    d = parseInt(m[9], 10);
+  } else if (m[10] !== undefined) {
+    const k = months.indexOf(m[11].toLowerCase());
+    d = parseInt(m[10], 10);
+    mo = k < 0 ? 0 : monthNo[k];
+    y = parseInt(m[12], 10);
+  } else {
+    const k = months.indexOf(m[13].toLowerCase());
+    mo = k < 0 ? 0 : monthNo[k];
+    d = parseInt(m[14], 10);
+    y = parseInt(m[15], 10);
+  }
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return 0;
+  return y * 372 + mo * 31 + d;
+}
+
 function earlierDay(s: string, docDay: number): boolean {
   // A date in s more than five days before the document day ("am 03.10.2026", "am 03.10.", "on 3 October").
   if (docDay <= 0) return false;
@@ -11284,6 +11487,10 @@ function pickAmount(lines0: string[], extraKeywords: string): AmountPick {
         }
         // a deduction paid along ("We have paid the bank charges of EUR 15.00") is no payment of its own
         if (st === "" || !inf.labels[j].payment || inf.labels[j].ded || inf.amounts[j].value <= 0 || inf.cols[j] !== "") continue;
+        // (a rest held back or put off, "The balance of £3,731.20 is held back until the replacement gearbox has been
+        // commissioned", "The balance ... will be paid within 7 days of commissioning", "Den Restbetrag von 6.048,00 EUR
+        // überweisen wir nach erfolgter Abnahme": no payment made now, whatever else is done in the sentence)
+        if (!TODAY_WORD.test(ftT) && REST_SUBJECT.test(flat) && (REST_KEPT.test(flat) || later)) { if (laterAt.length < 150) { laterAt.push(i); laterAt.push(j); laterAt.push(2); } continue; }
         // the writer's sentence: first person or a done passive ("die erste Rate wurde bereits am 01.10.2026 überwiesen")
         // or a passive with a later date ("Der Restbetrag wird zum 30.11.2026 beglichen")
         if (!(firstP || /\b(?:wurde|wurden|worden|has been|have been|was|were)\b/i.test(flat) || (laterStrong && /\b(?:wird|werden|will be)\b/i.test(flat)) || impersonal) || !(SENT_PAY.test(flat) || impersonal)) continue;
@@ -11325,7 +11532,9 @@ function pickAmount(lines0: string[], extraKeywords: string): AmountPick {
       if (same) continue;
       // alone, only a payment clearly put off to later or not made is no payment yet ("Wir werden 3.454,00 EUR mit Valuta
       // 30.10.2026 überweisen" announces the payment run of an advice)
-      if (curPayVals.length === 0 && priorAt.length === 0) { if (laterAt[q + 2] === 1 && laterVals.length < 50) laterVals.push(v); continue; }
+      // (a rest held back beside another amount labelled as a payment, "Total paid £5,000.00" above it: no candidate)
+      if (laterAt[q + 2] === 2 && paidBeside(infos, v, doc.quoteStart)) { inf.labels[j].payment = false; inf.labels[j].strong = false; inf.labels[j].neg = true; continue; }
+      if (curPayVals.length === 0 && priorAt.length === 0) { if (laterAt[q + 2] >= 1 && laterVals.length < 50) laterVals.push(v); continue; }
       const lab = inf.labels[j];
       lab.payment = false;
       lab.strong = false;
@@ -12078,6 +12287,7 @@ function pickAmount(lines0: string[], extraKeywords: string): AmountPick {
     for (const c of all) {
       if (!c.label.payment || !c.ownLabel || c.copy || c.value <= 0 || c.label.neg) continue;
       if (topPaid && CONVERSION_REF.test(infos[c.lineIdx].text)) continue;
+      if (deductedAmount(infos, c)) continue;
       if (c.method === "keyword-next-line" && c.line.indexOf(" | ") > 45) {
         // a sentence, not a label – unless it runs into the amount: "... überweisen wir Ihnen in Höhe von" / "3.454,00 EUR"
         const lbl = c.line.substring(0, c.line.indexOf(" | "));
@@ -12595,6 +12805,13 @@ const READER_INVOICE = /(?:^|[^a-zäöüß])(?:your|ihre|eure)\s+(?:rechnung(?:e
 // one made for the reader ("on your behalf", "für Sie verauslagt") is no payment to the reader at all
 const AUTHORITY_PAYEE = /finanzamt|zollamt|zollbehörde|(?:^|[^a-zäöüß])zoll(?![a-zäöüß])|customs|tax (?:authorit|office)|steuerbehörde|revenue|hmrc/i;
 const FOR_READER = /on your behalf|für sie|in ihrem namen|verauslagt/i;
+// the writer bills the reader for what it paid (a customs agent's duty payment: "The amount will be included in our
+// monthly disbursement invoice to you", "Den Betrag berechnen wir Ihnen ... mit der Monatsrechnung", "we will invoice you",
+// "wird Ihnen ... in Rechnung gestellt"): a payment made for the reader, who owes the money
+const READER_BILLED = /\b(?:will|shall) be (?:included in our (?:[a-z-]+ ){0,3}(?:invoice|bill)|(?:charged|invoiced|billed|recharged|re-?invoiced) to you)\b|\bwe (?:will|shall) (?:invoice|charge|bill|recharge|re-?invoice) you\b|(?:^|[^a-zäöüß])berechnen wir ihnen(?![a-zäöüß])|(?:^|[^a-zäöüß])stellen wir ihnen\b[^.!?\n]{0,60}?\bin rechnung\b|(?:^|[^a-zäöüß])wird ihnen\b[^.!?\n]{0,60}?(?:berechnet|in rechnung gestellt)(?![a-zäöüß])/i;
+// (a payment to an authority stated in the document, also with a verb no payer phrase knows: "an das Hauptzollamt Hamburg
+// entrichtet", "paid to HMRC")
+const AUTHORITY_PAID = /(?:^|[^a-zäöüß])(?:an|to) (?:das |die |den |dem |the )?(?:hauptzollamt|zollamt|finanzamt|zollbehörde|hmrc|hm revenue|customs|tax (?:office|authorit(?:y|ies)))\b[^.!?\n]{0,60}?(?:entrichtet|abgeführt|bezahlt|gezahlt|überwiesen)(?![a-zäöüß])|\b(?:paid|remitted|transferred)\b[^.!?\n]{0,40}?\bto (?:the )?(?:hmrc|hm revenue|customs|tax (?:office|authorit(?:y|ies)))\b/i;
 // the legal form that ends a company name ("Brightvale Packaging Inc", "Pelrode Verpackungen GmbH")
 const NAME_END_FORM = /\s(?:gmbh|ag|kg|ohg|se|ug|ltd|limited|plc|llp|inc|llc|corp|corporation|bv|nv|sa|sarl|sas|srl|spa|oy|ab)\.?(?=$|[\s,;:()])/i;
 // the first payment of a text that went to a third party or was made for the reader (payerRejected): what the text paid
@@ -12602,6 +12819,15 @@ const NAME_END_FORM = /\s(?:gmbh|ag|kg|ohg|se|ug|ltd|limited|plc|llp|inc|llc|cor
 // alone may still be the mailbox owner's under another name); reset for each document by adviceEvidence
 let thirdPaid = "";
 let thirdSure = false;
+// a sentence that explains a deduction of the document (dedNote): the deducted amounts of the document in cents (a
+// negative amount, a deduction label or column: "Contra - see note 1   -1,385.00", "Erstattungen   -418,00 EUR") and the
+// paragraphs of its text under a deduction heading or lead-in ("¹ Erläuterung zur Kürzung bei RE-2026-30588" above the
+// note, "Zur Kürzung: ...", "Regarding the deduction: ..."); set for each document by dedContext
+let dedCents: string[] = [];
+let dedParas: string[] = [];
+// the reader is the seller of an escrow or marketplace deal (readerIsSeller, set by adviceEvidence): a payout "released to
+// the seller" pays the reader then
+let sellerReader = false;
 // a payment made to a third party named by its role ("payment has been made by us to the claimant's solicitors", "settled
 // in full ... with the third party claimant", "Total paid to the third party", "an den Geschädigten überwiesen", "mit dem
 // Anspruchsteller reguliert"): an insurer's or a payer's settlement with someone else, no payment to the reader (not a
@@ -12628,15 +12854,38 @@ const PAID_COMPANY = /\b(?:paid|reimbursed|compensated|indemnified)\s+((?:[A-Z][
 const THIRD_PARTY_ROLE = /^(?:third[- ]party(?: claimant)?|claimants?|injured part(?:y|ies)|anspruchsteller(?:in)?|geschädigte[r]?)$/i;
 const SELLER_ROLE = /^(?:verkäufer(?:in)?|seller|vendor|händler(?:in)?|anbieter(?:in)?)$/i;
 const PAYEE_ROLE = /^(?:empfänger|empfängername|zahlungsempfänger|begünstigter?|beneficiary(?: name)?|payee(?: name)?|pay to)$/i;
+// the reader as the claimant of the claim a payment settles (readerClaimant): the text names the mailbox owner as the
+// claimant ("Re: Claim by Nordwerk Antriebstechnik GmbH against our insured ...", "Claimant: Nordwerk ...", "Ansprüche
+// der Nordwerk ...") or the claim as one against the writer's own insured or client, in a letter to the claimant
+// ("against our insured Dunmore Haulage Ltd", "gegen unseren Versicherungsnehmer"; not when that insured is the mailbox
+// owner): "the claimant" paid is the reader then
+const CLAIMANT_WORD = /claimant|anspruchsteller|geschädigte|injured part/i;
+const CLAIM_OF = /\bclaim(?:ant)?\s+(?:by|of|from)\s+|\bclaimant\s*:\s*|(?:^|[^a-zäöüß])(?:anspruch|ansprüche|schadenersatzansprüche|forderung)\s+(?:der|des|von)\s+|(?:^|[^a-zäöüß])anspruchsteller(?:in)?\s*:\s*/i;
+const CLAIM_ON_INSURED = /\bagainst our (?:insured|policy ?holder|client|member)s?\b|(?:^|[^a-zäöüß])gegen unsere[nm]? (?:versicherungsnehmer(?:in)?|versicherte[nm]?|mitglied|mandant(?:in|en)?)(?![a-zäöüß])/i;
+// taxes or duties as what a payment or its confirmation is for, right after the payer phrase ("anbei die Zahlung" +
+// "sbestätigung über die Einfuhrabgaben", "... for the import duties"): the payment went to the authority, none to the
+// reader
+const TAX_OBJECT = /^[a-zäöüß]{0,14}\s+(?:über|für|zu|zum|zur|der|des|for|of)\s+(?:die\s+|den\s+|das\s+|dem\s+|the\s+)?(?:einfuhrabgaben|einfuhrumsatzsteuer|zollabgaben|zölle[n]?|zoll|abgaben|steuern|import (?:duty|duties|vat)|customs duty|customs duties|duties)(?![a-zäöüß])/i;
+// the reader as the buyer of an escrow or marketplace deal ("zu Ihrem Kauf", "your purchase"); a payment "an diese" or "an
+// ihn" right before its verb, to a third person named before ("wir haben den Kaufpreis heute an diese überwiesen")
+const BUYER_READER = /(?:^|[^a-zäöüß])(?:ihre[mnrs]?|ihr|deine[mnrs]?|dein) (?:kauf|einkauf|kaufvertrag)(?![a-zäöüß])|\byour purchase\b/i;
+const THIRD_PRONOUN = /(?:^|[^A-Za-zÄÖÜäöüß])an (?:diese[nm]?|ihn|selbige[nm]?)\s+(?:(?:heute|bereits|soeben)\s+)?(?:überwiesen|ausgezahlt|ausbezahlt|gezahlt|bezahlt|weitergeleitet)(?![a-zäöüß])/i;
+// the debtor whose money a collecting agent received (debtorPassedOn)
+const DEBTOR_WORD = /schuldner(?:in|s)?(?![a-zäöüß])|drittschuldner|\bdebtor(?:s|['\u2019]s)?\b/i;
 // a sentence that explains a deduction or names a settlement of its own beside the payment ("... paid by us to the third
 // party contractor and have been deducted from this payment", "direkt an den Dritten gezahlt und hier in Abzug gebracht",
 // "Den Nutzungsausfall haben wir mit dem Anspruchsteller gesondert reguliert"): the third party named there is not the
 // payee of the payment
 const DED_REASON = /\b(?:deducted|deduction|deduct|in abzug|abgezogen|abzüglich|abzug|einbehalten|gekürzt|kürzung|verrechnet|aufgerechnet|offset|netted|set off|contra|debit (?:memo|note)|back-?charged?|charged back)\b/i;
 const SIDE_SETTLED = /\b(?:gesondert|separat|getrennt|separately|in addition|additionally)\b/i;
-// a payout to the seller ("Die Auszahlung an den Verkäufer wurde heute veranlasst", "payment released to the seller"):
-// an escrow or marketplace notice to the buyer when a field names someone else as the seller
-const SELLER_PAID = /(?:^|[^a-zäöüß])(?:auszahlung|zahlung|überweisung|ausgezahlt|überwiesen|gezahlt|freigegeben)\s+an\s+(?:den|die)\s+(?:verkäufer(?:in)?|händler(?:in)?|anbieter(?:in)?)(?![a-zäöüß])|\b(?:payout|payment|paid(?: out)?|released|disbursed|transferred|remitted)\s+to\s+the\s+(?:seller|vendor|merchant)\b/i;
+// a payout to the seller ("Die Auszahlung an den Verkäufer wurde heute veranlasst", "payment released to the seller"; also
+// with the verb last or an object between: "an die Verkäuferin überwiesen", "released the funds to the seller", "paid the
+// seller"): an escrow or marketplace notice to the buyer when a field names someone else as the seller
+const SELLER_PAID = /(?:^|[^a-zäöüß])(?:auszahlung|zahlung|überweisung|ausgezahlt|überwiesen|gezahlt|freigegeben)\s+an\s+(?:den|die)\s+(?:verkäufer(?:in)?|händler(?:in)?|anbieter(?:in)?)(?![a-zäöüß])|\b(?:payout|payment|paid(?: out)?|released|disbursed|transferred|remitted)\s+to\s+the\s+(?:seller|vendor|merchant)\b|(?:^|[^a-zäöüß])an\s+(?:den|die)\s+(?:verkäufer(?:in)?|händler(?:in)?|anbieter(?:in)?)(?![a-zäöüß])[^.!?\n;]{0,40}?(?:überwiesen|ausgezahlt|ausbezahlt|gezahlt|freigegeben)(?![a-zäöüß])|\b(?:paid|released|disbursed|transferred|remitted|sent)\s+(?:the|this|these|its|our)\s+(?:[a-z-]+\s+){0,3}?to\s+the\s+(?:seller|vendor|merchant)\b|\bpaid\s+the\s+(?:seller|vendor|merchant)\b/i;
+// a payout released by an escrow or payment service ("The funds held in escrow have been released to the seller today",
+// "the purchase price has been released to you", "Der Treuhandbetrag wurde heute an den Verkäufer ausgezahlt"): a payment
+// made (to the seller only where the reader is the seller, sellerReader); not "released for payment"
+const FUNDS_RELEASED = /\b(?:funds|payout|purchase price|proceeds|escrow (?:amount|funds|balance))\b[^.!?\n]{0,40}?\b(?:has|have|was|were) (?:now |today |just )?(?:been )?(?:released|disbursed|paid out)\b(?!\s+for\b)|(?:^|[^a-zäöüß])(?:kaufpreis|treuhandbetrag|treuhandsumme|verkaufserlös)\b[^.!?\n]{0,40}?\b(?:wurde|ist) (?:heute |soeben |nun |jetzt )?(?:an (?:sie|den verkäufer|die verkäuferin) )?(?:freigegeben|ausgezahlt|ausbezahlt|überwiesen)(?![a-zäöüß])/i;
 // the payment settles a claim of someone else against the reader (a liability insurer's letter to its policyholder: "in
 // full and final settlement of their claim against you", "Regulierung Ihres Haftpflichtschadens", "Ihre vertragliche
 // Selbstbeteiligung ... stellen wir Ihnen gesondert in Rechnung", "Your policy excess ... we will send you a separate debit
@@ -12663,8 +12912,10 @@ const PAYER_SWISS = /(?:wir haben|haben wir)[^.!?]{0,120}\b(?:vergütet|verguete
 // a payment service's or portal's notice that a named third party paid the reader ("Feldkamp GmbH hat Ihnen eine Zahlung
 // gesendet", "... hat Ihnen 4.422,39 € überwiesen", "Pellridge Mills, Inc. sent you a payment", "... paid you $500"): a
 // done payment to the reader, stated by the notifier (not "sent you a payment request / reminder / link", not "hat Ihnen
-// eine Rechnung gesendet")
-const NOTICE_PAID = /\bhat\s+ihnen\s+(?:(?:heute|gestern|soeben|gerade|bereits|eben|nun|jetzt|eine|die|ihre|weitere|folgende)\s+){0,3}(?:zahlung|überweisung|ueberweisung|teilzahlung|abschlagszahlung)\b(?:[^.!?\n]|\.(?=\d)){0,60}?\b(?:gesendet|geschickt|übermittelt|veranlasst|ausgeführt|angewiesen|überwiesen|ueberwiesen|geleistet|getätigt)\b|\bhat\s+ihnen\b(?:[^.!?\n]|\.(?=\d)){0,40}?\d[.,]\d{2}\s*(?:€|eur|euro|chf|usd|gbp)?\s*(?:€|eur|euro|chf|usd|gbp)?\s*(?:gesendet|geschickt|überwiesen|ueberwiesen|gezahlt|bezahlt)\b|\b(?:sent|paid)\s+you\s+(?:(?:a|an)\s+(?:payment|transfer|remittance)\b(?!\s+(?:request|reminder|link|plan|notice|demand|terms|schedule|proposal|instructions))|[$€£]\s?\d|(?:eur|usd|gbp|chf|aud|cad)\s?\d)/i;
+// eine Rechnung gesendet"; also a portal's list of several payments: "Aldermoor Offshore Ltd has released the following
+// payments to you", "The following payments to you have been released by ...", "... hat folgende Zahlungen an Sie
+// veranlasst")
+const NOTICE_PAID = /\bhat\s+ihnen\s+(?:(?:heute|gestern|soeben|gerade|bereits|eben|nun|jetzt|eine|die|ihre|weitere|folgende)\s+){0,3}(?:zahlung|überweisung|ueberweisung|teilzahlung|abschlagszahlung)(?:en)?\b(?:[^.!?\n]|\.(?=\d)){0,60}?\b(?:gesendet|geschickt|übermittelt|veranlasst|ausgeführt|angewiesen|überwiesen|ueberwiesen|geleistet|getätigt)\b|\bhat\s+ihnen\b(?:[^.!?\n]|\.(?=\d)){0,40}?\d[.,]\d{2}\s*(?:€|eur|euro|chf|usd|gbp)?\s*(?:€|eur|euro|chf|usd|gbp)?\s*(?:gesendet|geschickt|überwiesen|ueberwiesen|gezahlt|bezahlt)\b|\b(?:sent|paid)\s+you\s+(?:(?:a|an)\s+(?:payment|transfer|remittance)\b(?!\s+(?:request|reminder|link|plan|notice|demand|terms|schedule|proposal|instructions))|[$€£]\s?\d|(?:eur|usd|gbp|chf|aud|cad)\s?\d)|\b(?:has|have)\s+(?:(?:now|today|just|successfully)\s+)?(?:released|sent|made|initiated|issued|remitted|transferred|paid)\s+(?:(?:the\s+)?following\s+|(?:a|an)\s+)?(?:(?:two|three|four|five|\d{1,2}|separate|individual|further)\s+){0,2}(?:payments?|transfers?|remittances?|amounts?)\s+to\s+you\b|\b(?:payments?|transfers?|remittances?|amounts?)\s+to\s+you\s+(?:has|have)\s+(?:(?:now|today|just)\s+)?been\s+(?:released|sent|made|initiated|issued|remitted|transferred|paid)\b|\bhat\s+(?:(?:heute|soeben|gerade|folgende|die folgenden|zwei|drei|vier|\d{1,2})\s+){0,3}(?:zahlung|überweisung|ueberweisung)(?:en)?\s+an\s+sie\s+(?:gesendet|veranlasst|ausgeführt|angewiesen|überwiesen|ueberwiesen)\b/i;
 // a payment with its value date ("mit Valuta 30.10. erhalten Sie"), a SWIFT MT103 copy (":32A:" value date, currency,
 // amount): payment wording
 const VALUE_DATE_PAY = /\bmit (?:valuta|wertstellung)\b|(?:^|\n)\s*:32A:\s*\d{6}\s*[A-Z]{3}\s*\d/i;
@@ -12678,7 +12929,7 @@ const AMBIGUOUS_PAY_LABEL = /'(?:zahlbetrag|zahlungsbetrag|zahlungssumme|gesamtz
 // a payment announced under a condition or for after an event ("sobald freigegeben", "nach Prüfung", "Nach Ihrer
 // Bestätigung überweisen wir den Betrag umgehend", "once approved", "after your confirmation"); a date or "in den nächsten
 // Tagen" only schedules it
-const POSTPONE_COND = /\bsobald\b|\bnach (?:(?:ihrer|ihrem|unserer|unserem|der|dem|erfolgter|erfolgtem)\s+)?(?:klärung|eingang|prüfung|erhalt|abschluss|behebung|austausch|abnahme|freigabe|lieferung|wareneingang|fertigstellung|montage|inbetriebnahme|vorlage|zugang|korrektur|genehmigung|bestätigung|rückmeldung|zusendung|verifizierung|überprüfung)|\bonce\b|\bupon\b|\bafter (?:(?:the|your|our)\s+)?(?:goods|delivery|acceptance|approval|receipt|inspection|arrival|correction|confirmation|verification)|\bbeabsichtigen\b|\bintend to\b|\bvorbehaltlich\b|subject to (?:approval|receipt|release)/i;
+const POSTPONE_COND = /\bsobald\b|\bnach (?:(?:ihrer|ihrem|unserer|unserem|der|dem|erfolgter|erfolgtem)\s+)?(?:klärung|eingang|prüfung|erhalt|abschluss|behebung|austausch|abnahme|freigabe|lieferung|wareneingang|fertigstellung|montage|inbetriebnahme|vorlage|zugang|korrektur|genehmigung|bestätigung|rückmeldung|zusendung|verifizierung|überprüfung)|\bonce\b|\bupon\b|\bafter (?:(?:the|your|our)\s+)?(?:goods|delivery|acceptance|approval|receipt|inspection|arrival|correction|confirmation|verification|review|clarification|authori[sz]ation|sign-off|check)|\bbeabsichtigen\b|\bintend to\b|\bvorbehaltlich\b|subject to (?:approval|receipt|release)/i;
 // the auxiliaries of a payer phrase: in the past ("wurde ... überwiesen", "was transferred") a payment made, never one
 // announced; the one nearest the payment verb counts (pastPhrase)
 // a past day or week named for a payment ("on 3 October", "am 03.10.2026", "on Monday", "last week", "letzte Woche")
@@ -12906,6 +13157,10 @@ function negativeSignal(infos: LineInfo[], doc: DocInfo, strong: boolean, payer:
   const allText = sentenceText(all.join("\n"));
   if (!payer && (doc.kind !== "advice" || doc.title !== "")) {
     const w = WITHHELD.exec(allText);
+    // (the writer's own payment promised under a condition, "we will pay ... as soon as we receive the corrected
+    // invoice", is announced for later, not held back)
+    const wc = w !== null && /^will (?:pay|settle)\b/i.test(w[0]) ? /\b(?:once|when|after|as soon as)\b/i.exec(w[0]) : null;
+    if (wc !== null) return "payment announced for later ('" + wc[0] + "')";
     if (w !== null) return "payment withheld ('" + shortQuote(w[0]) + "')";
   }
   // money back asked for after a payment made twice or too much: a refund request
@@ -12938,6 +13193,8 @@ function payerRejected(s: string, at: number, text: string): boolean {
   // the condition may stand before the phrase or at its start ("wenn wir ... überwiesen haben")
   if (PAYER_COND.test(s.substring(a, at + Math.min(text.length, 30)))) return true;
   if (/gutgeschrieben|credited/i.test(text) && BONUS_CREDIT.test(s.substring(a, e))) return true;
+  // (a confirmation of taxes or duties paid: "anbei die Zahlungsbestätigung über die Einfuhrabgaben zu Ihrer Sendung")
+  if (TAX_OBJECT.test(s.substring(at + text.length, at + text.length + 60))) return true;
   // a payment for the reader to someone else or to a third party is no payment to the reader (kept in thirdPaid); only in
   // the clause of the payer's own verb: a deduction paid to someone else or the payer's own tax stands in a clause of its
   // own ("mit 4.765,40 EUR bezahlt, abzüglich der Frachtkosten, die wir für Sie an die Spedition verauslagt haben", "den
@@ -12951,7 +13208,7 @@ function payerRejected(s: string, at: number, text: string): boolean {
     // costs were paid by us to the third party contractor and have been deducted from this payment": the payment of the
     // document still goes to the reader, the phrase only states no payment to it; not another clause of the sentence, "...
     // to HM Revenue & Customs on your behalf; our invoice ... will follow separately")
-    if (DED_REASON.test(cl) || SIDE_SETTLED.test(cl)) return true;
+    if (DED_REASON.test(cl) || SIDE_SETTLED.test(cl) || dedNote(s.substring(a, e))) return true;
     // (sure: a role or a payment for the reader, not an authority as the payee alone)
     const sure = role !== "" && (!AUTHORITY_PAYEE.test(role) || FOR_READER.test(role));
     if (thirdPaid === "" || (sure && !thirdSure)) { thirdPaid = tp; thirdSure = sure; }
@@ -12961,10 +13218,25 @@ function payerRejected(s: string, at: number, text: string): boolean {
   // settled ... with the third party claimant"; not in another clause of its sentence, "We have today transferred USD
   // 29,820.00 to your account ...; the 30 % US withholding tax has been paid to the Internal Revenue Service")
   // (the same clause as above: a payment made for the reader is already checked there)
-  if (thirdPartyPaid(cl) !== "") return true;
+  if (thirdPartyPaid(cl) !== "" && !(CLAIMANT_WORD.test(cl) && readerClaimant(s))) return true;
   // (a payout to the seller in the third person, "The funds have been released to the seller today", is no payment to
   // the reader: the seller paid would read "released to you")
-  if (SELLER_PAID.test(cl)) return true;
+  // (not where the reader is the seller, sellerReader: "Seller: Nordwerk Antriebstechnik GmbH" in the escrow's notice)
+  const sp = SELLER_PAID.exec(cl);
+  if (sp !== null && !sellerReader) {
+    // (the reader is the buyer, "Erhalt der Ware zu Ihrem Kauf", "your purchase": the payout went to the seller)
+    if (thirdPaid === "" && BUYER_READER.test(s)) { thirdPaid = shortQuote(sp[0]); thirdSure = true; }
+    return true;
+  }
+  // (a payment "an sie" in lower case in a text that writes the reader's "Ihr" / "Ihnen" with a capital letter: to her or to
+  // them, a party named before - "Die Verkäuferin ... hat ihre Bankverbindung verifiziert; wir haben den Kaufpreis heute an
+  // sie überwiesen"; sure when the sentence names the seller)
+  if (lowerSie(cl, s) || THIRD_PRONOUN.test(cl)) {
+    let b = at;
+    while (b > 0 && at - b < 300 && !/[.!?]/.test(s.charAt(b - 1))) b--;
+    if (thirdPaid === "") { thirdPaid = shortQuote(text); thirdSure = /verkäufer|händler|anbieter|seller|vendor/i.test(s.substring(b, e)); }
+    return true;
+  }
   // a phrase that runs from a sentence ending with a colon into the table below it ("Ihre Teilzahlung ... haben wir bereits
   // berücksichtigt:" / "Rechnung   Datum   fällig am   Betrag   bezahlt"): the payment word is a column header (not after a
   // payment verb of its own: "folgende Rechnungen haben wir heute zur Zahlung gebracht:")
@@ -13021,6 +13293,9 @@ function thirdPayeeElsewhere(flow: string, own: string): string {
   // ausgezahlt".
   for (const sn of flow.split(/[.!?]\s+|\n/)) {
     if (!/\b(?:paid|payment|made|transferred|remitted|wired|settlement)\b|überwiesen|ausgezahlt|gezahlt|entschädigung|zahlung/i.test(sn)) continue;
+    // (not a sentence that explains a deduction of the document: "Zur Kürzung: ... bereits an den Warenempfänger gezahlt",
+    // "wurden Erstattungen in Höhe von 418,00 EUR an Ihre Kunden ausgezahlt" beside "Erstattungen   -418,00 EUR")
+    if (dedNote(sn)) continue;
     const r = thirdPartyPayee(sn, own, true, true);
     if (r !== "" && !AUTHORITY_PAYEE.test(r)) return r;
   }
@@ -13053,6 +13328,7 @@ function thirdPartyPayee(sent: string, text: string, roleOnly: boolean, strict: 
       if ((strict || DELIVERY_ROLE.test(rm[0])) && !(m[1].toLowerCase() === "an" ? PAY_AFTER_ROLE.test(who.substring(ra)) : PAY_BEFORE_ROLE.test(sent.substring(Math.max(0, m.index - 50), m.index + 1)))) continue;
       const fm = /\s/.test(rm[0]) ? null : new RegExp("(?:^|\\n)[ \\t]*(?:third[- ]party\\s+)?" + rm[0].replace(/['\u2019]s$/, "") + "[^:\\n]{0,20}?(?::[ \\t]*|[ \\t]{2,})([^\\n]{3,80})", "i").exec(text);
       if (fm !== null && mailOwner.length > 0 && ownerName(fm[1])) continue;
+      if (CLAIMANT_WORD.test(rm[0]) && readerClaimant(text)) continue;
       return shortQuote(m[0]);
     }
     // (the reader, its own agent, "your factoring company", "Ihre Bank", or the writer is no third party)
@@ -13089,6 +13365,7 @@ function thirdPartyDoc(infos: LineInfo[], end: number, flowOwn: string): string 
   // not from a sentence that explains a deduction or names a settlement of its own beside the payment (DED_REASON,
   // SIDE_SETTLED): the payment of the document goes elsewhere
   if ((roleField(infos, end, THIRD_PARTY_ROLE) & 1) !== 0) return "";
+  dedContext(infos, end, flowOwn);
   // (the sentences of each paragraph; a deduction stated right before or after names the reason too: "... paid by us to
   // the third party. The cost has been deducted as agreed.")
   for (const para of flowOwn.split("\n")) {
@@ -13096,12 +13373,119 @@ function thirdPartyDoc(infos: LineInfo[], end: number, flowOwn: string): string 
     for (let k = 0; k < sts.length; k++) {
       if (DED_REASON.test(sts[k]) || SIDE_SETTLED.test(sts[k]) || (k > 0 && DED_REASON.test(sts[k - 1])) || (k + 1 < sts.length && DED_REASON.test(sts[k + 1]))) continue;
       const t = thirdPartyPaid(sts[k]);
-      if (t !== "") return t;
+      if (t !== "" && !dedNote(sts[k]) && !(CLAIMANT_WORD.test(t) && readerClaimant(flowOwn))) return t;
     }
   }
   const sm = SELLER_PAID.exec(flowOwn);
-  if (sm !== null && mailOwner.length > 0 && roleField(infos, end, SELLER_ROLE) === 2) return sm[0];
+  if (sm !== null && mailOwner.length > 0 && roleField(infos, end, SELLER_ROLE) === 2 && !readerIsSeller(infos, end)) return sm[0];
   return "";
+}
+
+function dedContext(infos: LineInfo[], end: number, flow: string): void {
+  // The deducted amounts and the deduction notes of a document (dedCents, dedParas). flow: its own text with wrapped lines
+  // joined and without dots in numbers. A heading is a short line above the paragraph without a sentence end or an amount;
+  // a lead-in is the start of the paragraph up to a colon.
+  dedCents = [];
+  dedParas = [];
+  for (let i = 0; i < end && i < infos.length; i++) {
+    const inf = infos[i];
+    if (inf.copy || inf.quoted) continue;
+    for (let j = 0; j < inf.amounts.length && dedCents.length < 60; j++) {
+      const a = inf.amounts[j];
+      if (a.value === 0 || !(a.value < 0 || inf.labels[j].ded || inf.cols[j] === "ded")) continue;
+      const c = String(Math.round(Math.abs(a.value) * 100));
+      if (dedCents.indexOf(c) < 0) dedCents.push(c);
+    }
+  }
+  const paras = flow.split("\n");
+  for (let p = 0; p < paras.length && dedParas.length < 20; p++) {
+    const lead = /^[^.!?:\n]{0,50}:/.exec(paras[p]);
+    const head = p > 0 ? paras[p - 1].trim() : "";
+    const heading = head.length > 0 && head.length <= 80 && !/[.!?;]$/.test(head) && !/\d[.,]\d\d(?!\d)/.test(head);
+    if ((lead !== null && DED_REASON.test(lead[0])) || (heading && DED_REASON.test(head))) dedParas.push(paras[p].replace(/\s+/g, " ").trim());
+  }
+}
+
+function lowerSie(t: string, text: string): boolean {
+  // "an sie" in lower case in t (a payer phrase, a label) while the text writes the reader's "Ihr" / "Ihnen" with a capital
+  // letter after a lower-case word: "sie" is a third person then, not the reader
+  return /(?:^|[^A-Za-zÄÖÜäöüß])an sie(?![A-Za-zÄÖÜäöüß])/.test(t) && /[a-zäöüß,;]\s+(?:Ihnen|Ihre[mnrs]?|Ihr)(?![A-Za-zÄÖÜäöüß])/.test(text);
+}
+
+function readerIsSeller(infos: LineInfo[], end: number): boolean {
+  // The reader is the seller: a seller field names the mailbox owner, or it names the addressee of the greeting ("Hello
+  // Nordwerk Antriebstechnik GmbH," above "Seller: Nordwerk Antriebstechnik GmbH"; also when the owner's name is unknown).
+  if ((roleField(infos, end, SELLER_ROLE) & 1) !== 0) return true;
+  let greet = "", seller = "";
+  for (let i = 0; i < end && i < infos.length && i < 80; i++) {
+    const t = infos[i].text;
+    const gm = greet === "" ? GREETING_NAME.exec(t) : null;
+    if (gm !== null) greet = gm[1].toLowerCase().replace(/[^a-z0-9äöüß]+/g, " ").trim();
+    const sm = seller === "" ? /^\s*(?:seller|vendor|verkäufer(?:in)?|händler(?:in)?)\s*(?::\s*|\s{2,})([^\n]{3,80})$/i.exec(t) : null;
+    if (sm !== null) seller = sm[1].toLowerCase().replace(/[^a-z0-9äöüß]+/g, " ").trim();
+  }
+  return greet.length >= 4 && seller.length >= 4 && (seller.indexOf(greet) === 0 || greet.indexOf(seller) === 0);
+}
+
+function authorityPaid(flow: string): string {
+  // The payment to an authority that a text states (AUTHORITY_PAID; flow: read with wrapped lines joined and without dots
+  // in numbers and dates; "" = none).
+  const m = AUTHORITY_PAID.exec(flow);
+  return m !== null ? m[0].trim() : "";
+}
+
+function debtorPassedOn(plain: string, flow: string): boolean {
+  // A collecting agent's or a trustee's account to the reader: a sentence says the writer received the money of the
+  // debtor ("Die Zahlung der Schuldnerin ist am 27.10.2026 bei uns eingegangen", "Payment from the debtor was received on 27
+  // October"), and the text pays it on to the reader ("Der Auszahlungsbetrag wird Ihnen heute ... überwiesen", "Auszahlungs-
+  // betrag an Sie", "remitted to your account"): a payment to the reader, no payee's letter about a received payment.
+  // plain: the text with its own line breaks, flow: with wrapped lines joined (a sentence may start a line in either).
+  if (!READER_PAYEE.test(flow) && !PAID_TO_READER.test(flow)) return false;
+  for (const sn of (plain + "\n" + flow).split(/[.!?]\s+|\n/)) if (DEBTOR_WORD.test(sn) && PAYEE_VIEW.test(sn)) return true;
+  return false;
+}
+
+function readerClaimant(text: string): boolean {
+  // The reader is the claimant of the claim the text settles: CLAIM_OF with the mailbox owner after it; else, when no other
+  // company is named as the claimant there ("Claim by Kestrel Ltd against our insured ..."), CLAIM_ON_INSURED without the
+  // owner as that insured.
+  const g = new RegExp(CLAIM_OF.source, "gi");
+  let m: RegExpExecArray | null;
+  let other = false;
+  for (let guard = 0; guard < 20 && (m = g.exec(text)) !== null; guard++) {
+    const who = text.substring(m.index + m[0].length, m.index + m[0].length + 60);
+    if (ownerName(who)) return true;
+    if (NAME_END_FORM.test(who)) other = true;
+  }
+  const im = other ? null : CLAIM_ON_INSURED.exec(text);
+  return im !== null && !ownerName(text.substring(im.index + im[0].length, im.index + im[0].length + 60));
+}
+
+function deductedAmount(infos: LineInfo[], c: Candidate): boolean {
+  // A payment-worded amount that the document deducts in another line (a negative amount of the same value: "their value
+  // of £1,206.00 was paid by us directly to the consignee" below "Less: damaged units   -1,206.00"): the sentence explains
+  // the deduction, it names no payment of the document.
+  for (let i = 0; i < infos.length; i++) {
+    if (i === c.lineIdx || infos[i].copy || infos[i].quoted) continue;
+    for (const a of infos[i].amounts) if (a.value < 0 && Math.abs(a.value + c.value) < 0.005) return true;
+  }
+  return false;
+}
+
+function dedNote(sent: string): boolean {
+  // A sentence that explains a deduction of the document (dedContext): it stands in a deduction note or names a deducted
+  // amount ("their value of £1,206.00 was paid by us directly to the consignee" below "Less: damaged units   -1,206.00");
+  // a third party paid there is not the payee of the document's payment. sent: read without dots in numbers.
+  const t = sent.replace(/\s+/g, " ").trim();
+  if (t.length < 8) return false;
+  for (const p of dedParas) if (p.indexOf(t) >= 0) return true;
+  const re = /\d(?:[\d.,'’]*\d)?/g;
+  let m: RegExpExecArray | null;
+  for (let guard = 0; guard < 40 && (m = re.exec(t)) !== null; guard++) {
+    const d = m[0].replace(/\D/g, "").replace(/^0+/, "");
+    if (d.length >= 3 && dedCents.indexOf(d) >= 0) return true;
+  }
+  return false;
 }
 
 function roleField(infos: LineInfo[], end: number, role: RegExp): number {
@@ -13176,6 +13560,9 @@ function payerSentence(infos: LineInfo[], c: Candidate): boolean {
   // EUR 1,204.00"), not only another sentence of the text ("we paid invoice 4711 last week. Our balance shows EUR ...").
   if (c.pos < 0 || c.pos >= infos[c.lineIdx].sents.length) return false;
   const f = unwrapLines(flatDots(infos[c.lineIdx].sents[c.pos]).replace(NOT_PAID_G, " "));
+  // (also the payments made now that PAYER_NOW reads: "Ihre Rechnung ... über 7.140,00 EUR ist im heutigen Zahllauf
+  // enthalten")
+  if (f !== "" && PAYER_NOW.test(f) && !WISHED_PAY.test(f)) return true;
   return f !== "" && (PAYER_DONE.test(f) || PAYER_STATEMENT.test(f) || PAYER_DONE_MORE.test(f) || PAY_SERVICE_SENT.test(f) || PAYER_STATIVE.test(f) || PAYER_ELLIPTIC.test(f) || PAYER_NOTE.test(f) || PAYER_SWISS.test(f));
 }
 
@@ -13304,6 +13691,9 @@ function adviceEvidence(infos: LineInfo[], doc: DocInfo, best: Candidate | null)
   // Advice", and e-mail addresses or web links, "Payments@council.example", are no payment words of this text)
   const ownPay = own.replace(ADVICE_PLURAL, " ").replace(FUTURE_ADVICE, " ").replace(ADVICE_REF_G, " ").replace(ADVICE_SOUGHT_G, " ").replace(ADDRESS_LINK, " ");
   ev.payWord = PAYMENT_MARKER.test(ownPay.replace(PAYOUT_NOT_MADE, " ").replace(RETENTION_OF_TITLE, " ")) || FOREIGN_PAYMENT_MARKER.test(own) || WEAK_PAY_WORD.test(ownPay) || VALUE_DATE_PAY.test(own);
+  // (the writer's own payment in English words, "we will wire the EUR 6,240.00 tomorrow", as "werden wir morgen
+  // überweisen")
+  if (!ev.payWord && PAY_PROMISE.test(ownPay)) ev.payWord = true;
   // (not the text's denial "This message is not a remittance advice", a request for an advice or a missing one, a sample
   // advice, an advice cited as a reference, an e-mail address or web link such as "zahlungsavis@...": none of them is an
   // advice of this mail)
@@ -13314,6 +13704,8 @@ function adviceEvidence(infos: LineInfo[], doc: DocInfo, best: Candidate | null)
   // (a payment made twice with a request for the money back, "was paid twice ... please refund": the sentences of the
   // double payment are the background of the request, no payer statement)
   const plain0 = flatDots(own).replace(NOT_PAID_G, " ");
+  dedContext(infos, doc.quoteStart, unwrapLines(plain0));
+  sellerReader = readerIsSeller(infos, doc.quoteStart);
   const refund = DUPLICATE_PAY.test(plain0) && REFUND_ASK.test(plain0);
   const plain = refund ? dropSentences(plain0, DUPLICATE_PAY) : plain0;
   // "die Rechnungen ... (zusammen 3.724,42 €) sind heute raus": paid or sent? Only with an amount, then for a human check
@@ -13341,6 +13733,7 @@ function adviceEvidence(infos: LineInfo[], doc: DocInfo, best: Candidate | null)
     let d2 = payerFind(PAYER_DONE_MORE, flow, rej2);
     if (d2 !== null && negatedPhrase(d2[0])) d2 = null;
     if (d2 === null) d2 = payerFind(PAY_SERVICE_SENT, flow, rej2);
+    if (d2 === null) d2 = payerFind(FUNDS_RELEASED, flow, rej2);
     if (d2 !== null) { done = d2; ev.phrase = !/angewiesen/i.test(d2[0]); }
   }
   // (a negated phrase, "Please note that no payment has been made so far", states no payment: the next one counts, and
@@ -13348,6 +13741,12 @@ function adviceEvidence(infos: LineInfo[], doc: DocInfo, best: Candidate | null)
   const neg: boolean[] = [false];
   let pm = done !== null ? done : payerFindKept(PAYER_STATEMENT, plain, rej, neg);
   if (pm === null) pm = payerFindKept(PAYER_LONG, plain, rej, neg);
+  // (not beside another payment the writer only wishes or promises under a condition: "is included in today's payment
+  // run. Invoice ... we will pay once the goods have been checked")
+  if (pm === null && !WISHED_PAY.test(plain)) {
+    pm = payerFindKept(PAYER_NOW, plain, rej, neg);
+    if (pm !== null) ev.phrase = true;
+  }
   // an impersonal or elliptic statement of a paid invoice, not in a document of another type (an invoice "Die Rechnung ist
   // bereits bezahlt") or a seller's text; the elliptic notes not beside an open or due amount
   if (pm === null && doc.kind !== "other" && !backReq && !SELLER_TEXT.test(plain)) {
@@ -13482,7 +13881,7 @@ function adviceEvidence(infos: LineInfo[], doc: DocInfo, best: Candidate | null)
     if (ev.positive === "" && best !== null && !best.copy && best.label.payment && !best.label.neg) {
       const tm = TRANSFER_LABEL.exec(labelOf(best, infos));
       // (not a label that names a third party as the payee: "Total paid to the third party")
-      if (tm !== null && thirdPartyPayee(labelOf(best, infos), own, false, false) === "") { ev.positive = "payment label '" + tm[0] + "'"; ev.kind = "label"; }
+      if (tm !== null && thirdPartyPayee(labelOf(best, infos), own, false, false) === "" && !lowerSie(labelOf(best, infos), own)) { ev.positive = "payment label '" + tm[0] + "'"; ev.kind = "label"; }
     }
     // a payment table: payment / Skonto / deduction columns, or a payment label in a line of its own
     for (let i = 0; i < doc.quoteStart && i < infos.length && ev.positive === ""; i++) {
@@ -13492,7 +13891,7 @@ function adviceEvidence(infos: LineInfo[], doc: DocInfo, best: Candidate | null)
       for (const lab of inf.labels) {
         if (!lab.payment || lab.neg || lab.ded) continue;
         const tm = TRANSFER_LABEL.exec(inf.text);
-        if (tm !== null && thirdPartyPayee(inf.text, own, false, false) === "") { ev.positive = "payment label '" + tm[0] + "'"; ev.kind = "label"; break; }
+        if (tm !== null && thirdPartyPayee(inf.text, own, false, false) === "" && !lowerSie(inf.text, own)) { ev.positive = "payment label '" + tm[0] + "'"; ev.kind = "label"; break; }
       }
     }
     // "Zahlbetrag" / "Zahlungsbetrag" also end invoices and receipts ("Überweisungsbetrag", "Auszahlungsbetrag" do not);
@@ -13532,6 +13931,12 @@ function judgeDocument(pick: AmountPick, hasAmount: boolean, reply: boolean, att
   // that speaks for an advice the document stays for a check
   // (a tax or duty the payer withheld and paid to the authority beside a title or a payment label is a deduction of the
   // advice: "less withholding tax 10 % ... has been paid to the tax authority")
+  // (not that tax or duty paid for the reader and billed to it: "The above duty and import VAT were paid by us to HM Revenue
+  // & Customs ... The amount will be included in our monthly disbursement invoice to you", "Die Abgaben haben wir an das
+  // Hauptzollamt Hamburg entrichtet. Der Betrag wird Ihnen ... in Rechnung gestellt" - the reader owes the money)
+  const billText = ev.payer ? "" : unwrapLines(flatDots(doc.ownText));
+  const billed = READER_BILLED.test(billText) ? (ev.thirdParty !== "" && AUTHORITY_PAYEE.test(ev.thirdParty) ? ev.thirdParty : authorityPaid(billText)) : "";
+  if (billed !== "") return { verdict: "other", why: "payment to an authority for the recipient ('" + shortQuote(billed) + "'), billed to it - not a payment to the recipient" };
   if (ev.thirdParty !== "" && !ev.payer && (ev.positive === "" || (hasAmount && !/tax|steuer|finanzamt|hmrc|revenue|customs|zoll|dut(?:y|ies)|abgaben/i.test(ev.thirdParty)))) {
     const tw = "payment to a third party or for the reader ('" + ev.thirdParty + "')";
     // (a payee named only as a company: the mailbox owner under another name? for a check)
@@ -13544,6 +13949,14 @@ function judgeDocument(pick: AmountPick, hasAmount: boolean, reply: boolean, att
     if (ev.payer && hasAmount) return { verdict: "unclear", why: (ev.positive !== "" ? ev.positive : "payer statement") + ", but " + ev.negative };
     return { verdict: "other", why: ev.negative };
   }
+  // a payment day more than a week (eight days) after the mail ("mit unserem Zahllauf am 13.11.2026", "Ausführungsdatum
+  // 20.11.2026", "Planned payment date 20/11/2026", a "Valuta" column of the run): the payment is announced for later, also
+  // beside a payment table, a payment label or a payer's future phrase; an advice title or a bank form stays for a check
+  // (beside a payment the writer states as made only a value or execution day counts: "haben wir mit Valuta 13.11.2026 zur
+  // Zahlung angewiesen")
+  const later0 = laterPayDay(doc.ownText, mailDay);
+  const later = ev.kind === "payer" && ev.strong && !/valuta|wertstellung|value date|for value|ausführung|execution/i.test(later0) ? "" : later0;
+  if (later !== "" && ev.positive !== "" && (hasAmount || doc.kind !== "advice")) return doc.kind === "advice" ? { verdict: "unclear", why: ev.positive + ", but payment announced for later ('" + later + "')" } : { verdict: "other", why: "payment announced for later ('" + later + "')" };
   if (!hasAmount && (reply || (!ev.payWord && ev.hint === ""))) return { verdict: "other", why: reply ? "reply without an amount" : "no amount, no payment wording" };
   // a file of another type whose payer phrase has no amount anywhere, not even a done one ("Der Betrag von ____ EUR wurde
   // am ____ überwiesen" on the back of a dunning form): a form or a quote, nothing to book
@@ -13561,6 +13974,11 @@ function judgeDocument(pick: AmountPick, hasAmount: boolean, reply: boolean, att
     // a payment announced under a condition the reader has to meet first ("Die Anzahlung überweisen wir, sobald uns Ihre
     // Anzahlungsrechnung vorliegt"): nothing is paid yet
     if (ev.kind === "payer" && !ev.strong && ev.onReader) return { verdict: "other", why: "payment announced for later ('" + ev.postponed + "')" };
+    // (the writer's own payment put off to a later time, "überweisen wir nächste Woche" as "werden wir nächste Woche
+    // überweisen", or a payment announced under a condition without the writer's own word for it, "wird nach Freigabe
+    // überwiesen" as "will be paid after approval": nothing is paid and nothing to check; the writer's own payment tied to
+    // a condition stays for a check, "überweisen wir, sobald die Mängel behoben sind")
+    if (ev.kind === "payer" && !ev.strong && ev.postponed !== "" && pick.confidence === "low" && FIRST_PERSON.test(ev.positive) !== POSTPONE_COND.test(ev.postponed)) return { verdict: "other", why: "payment announced for later ('" + ev.postponed + "')" };
     // a payment announced for later ("wird nach Prüfung überwiesen", "zahlen wir, sobald ...")
     if (ev.kind === "payer" && !ev.strong && ev.postponed !== "" && pick.confidence === "low") return { verdict: "unclear", why: "payment announced for later ('" + ev.postponed + "')" };
     // nothing paid: an empty form or a netting to zero
@@ -13580,6 +13998,7 @@ function judgeDocument(pick: AmountPick, hasAmount: boolean, reply: boolean, att
     const topic = asideTopic(doc.ownText, hasAmount);
     if (topic !== "") return { verdict: "other", why: topic };
   }
+  if (later !== "") return { verdict: "other", why: "payment announced for later ('" + later + "')" };
   if (ev.payWord || ev.hint !== "") return { verdict: "unclear", why: hasAmount ? "payment wording, but no advice evidence" : (ev.hint !== "" ? "advice word '" + ev.hint + "', but no amount" : "payment wording, but no amount") };
   return { verdict: "other", why: "amount without payment wording" };
 }
@@ -13682,6 +14101,25 @@ function laterPayment(t: string): string {
   return "";
 }
 
+function nearPromise(t: string): boolean {
+  // a sentence of t in which the writer fixes its own payment for today or tomorrow ("we will wire the EUR 6,240.00
+  // tomorrow morning", "die 6.240,00 EUR werden wir morgen früh überweisen")
+  for (const st of t.split(/[.!?](?:\s+|$)/)) if ((OWN_PAY.test(st) || FUTURE_PAY.test(st)) && /\b(?:heute|morgen|today|tomorrow|tonight)\b/i.test(st) && !LATER_SENT.test(st)) return true;
+  return false;
+}
+
+function promiseLater(t: string): string {
+  // the writer's own payment put off to a later time in a sentence of t, in words that laterPayment() leaves out ("wir
+  // überweisen die 2.450,00 EUR nächste Woche", "we will wire it next week", "we are transferring the EUR 2,450.00 on 20
+  // November 2026"): the phrase, "" if none (not today or tomorrow)
+  for (const st of t.split(/[.!?](?:\s+|$)/)) {
+    const m = OWN_PAY.exec(st);
+    if (m === null || /\b(?:heute|morgen|today|tomorrow)\b/i.test(st)) continue;
+    if (POSTPONE_LATER.test(st) || NEXT_RUN.test(st) || laterPayDay(st, mailDay) !== "") return m[0];
+  }
+  return "";
+}
+
 function asideTopic(own: string, hasAmount: boolean): string {
   // the topic of a text without advice evidence whose payment words are only an aside ("" = none): a payment put on hold
   // (without any amount); when neither an invoice number nor a single payment of the writer is named also a request for
@@ -13714,7 +14152,9 @@ function asideTopic(own: string, hasAmount: boolean): string {
     if (hp !== null && !now && !LIST_NAMED.test(sentenceAt(t, hp.index, hp[0].length))) return "payment not made yet ('" + shortQuote(hp[0]) + "')";
     const pp = PAY_PLAN_TOPIC.exec(t);
     if (pp !== null) return "payment plan ('" + shortQuote(pp[0]) + "')";
-    const rm = REMINDER_TOPIC.exec(t);
+    // (not beside the writer's own payment fixed for today or tomorrow: "Thanks for the reminder ... we will wire the EUR
+    // 6,240.00 tomorrow morning")
+    const rm = nearPromise(t) ? null : REMINDER_TOPIC.exec(t);
     if (rm !== null) return "payment reminder ('" + shortQuote(rm[0]) + "')";
     // a payment placed in a coming payment run or announced for later ("Sie ist in unserem nächsten Zahllauf am Freitag,
     // 13.11.2026, enthalten", "will be paid next week after approval"), when no other sentence names a payment as made now
@@ -13726,6 +14166,8 @@ function asideTopic(own: string, hasAmount: boolean): string {
     if (nr !== null) return "payment not made yet ('" + shortQuote(nr[0].replace(/^[^A-Za-zÄÖÜäöüß]+/, "")) + "')";
     const lp = nowPay ? "" : laterPayment(t);
     if (lp !== "") return "payment announced for later ('" + shortQuote(lp) + "')";
+    const lo = nowPay || lp !== "" ? "" : promiseLater(t);
+    if (lo !== "") return "payment announced for later ('" + shortQuote(lo) + "')";
     // someone else's reported payment that the writer asks to check ("Herr X hat mir gesagt, sie hätten überwiesen. Kannst
     // du nachsehen, ob das Geld schon eingegangen ist?")
     const sq = REPORTED.test(t) ? STATUS_QUESTION.exec(t) : null;
@@ -13786,6 +14228,17 @@ const OWN_PAYMENT_NAMED = /(?:^|[^a-zäöüß])(?:zu|zur|über|von|für|mit) uns
 // in 1920", "has been sent to your account", "auf Ihr Konto überwiesen"): the mail is about money paid to the reader, a
 // fee invoice named beside it ("Your fee invoice ... is now available") is an aside
 const PAYOUT_TO_READER = /\b(?:payouts?|payments?|transfers?|funds|money|disbursements?|remittance)\b[^.!?\n]{0,80}?\b(?:(?:is|are) on (?:its|their|the) way to|(?:has|have) been (?:sent|paid|transferred|credited) to|(?:was|were) (?:sent|paid|transferred|credited) to) (?:you\b|your (?:[a-z]+ ){0,2}account\b)|(?:^|[^a-zäöüß])(?:auszahlung|überweisung|zahlung|betrag|geld)(?![a-zäöüß])[^.!?\n]{0,80}?\bauf ihr (?:bank)?konto\b[^.!?\n]{0,30}?(?:überwiesen|ausgezahlt|gutgeschrieben|unterwegs)/i;
+// a platform's payout to the writer itself, passed on to the mailbox owner: a mail text names the payout as the writer's own
+// or waits for the money ("Unsere Auszahlung vom Werkbankmarkt ist heute rausgegangen", "The payout should reach our account
+// ...", "once their payout has arrived", "Sobald das Geld bei uns eingegangen ist") and announces the writer's own payment
+// for later (PAY_LATER: "..., überweisen wir Ihnen ...", "we will then settle your invoice"): the payout notice it forwards
+// or attaches ("Ihre Auszahlung ... wurde heute veranlasst", "Your payout of €3,850.16 has been sent") pays the writer
+const OWN_PAYOUT = /\b(?:our|my|their) (?:(?:marketplace|platform|shop|seller|weekly|monthly|latest)\s+)?payouts?\b(?=\s+(?:from|of|for|is|was|has|had|have|should|will|arrived|arrives|came|comes|went|reached|reaches|on its way|statement))|\bpayouts?\b[^.!?\n]{0,60}?\b(?:reach|reaches|arrive (?:in|on|at)|arrives (?:in|on|at)|be credited to|land in|lands in|hit|hits) (?:our|my|their) (?:bank )?account\b|(?:^|[^a-zäöüß])(?:unsere|meine) (?:[a-zäöüß-]+ )?auszahlung(?:en)?(?![a-zäöüß])|(?:^|[^a-zäöüß])(?:auszahlung|das geld|der betrag)\b[^.!?\n]{0,60}?(?:auf unse?r(?:em)? (?:bank)?konto|bei uns)(?![a-zäöüß])|\b(?:the )?(?:money|funds|payout)\s+(?:has\s+|have\s+)?(?:arrived|arrives|reached us|reaches us|landed|lands|come in|comes in|came in)\b/i;
+const PAY_LATER = /\b(?:we|they|i)(?:['\u2019]ll| will| shall| are going to)\s+(?:(?:then|now|also|immediately|promptly)\s+)?(?:pay|settle|transfer|remit|clear)\b|(?:^|[^a-zäöüß])sobald\b[^.!?\n]{0,80}?(?:überweisen|zahlen|begleichen|bezahlen) wir(?![a-zäöüß])|(?:^|[^a-zäöüß])(?:überweisen|zahlen|begleichen|bezahlen) wir\b[^.!?\n]{0,80}?(?:^|[^a-zäöüß])(?:sobald|nach eingang|wenn)(?![a-zäöüß])|(?:^|[^a-zäöüß])werden wir\b[^.!?\n]{0,80}?(?:überweisen|bezahlen|begleichen|zahlen)(?![a-zäöüß])/i;
+// a colleague passes a payment on and says the mailbox has nothing to book ("nothing to book on your side", "no action
+// needed on your side", "bitte nicht buchen", "kein Handlungsbedarf", "ist bereits gebucht"): another company or department
+// books it (a group company's own receipt), for a check
+const NOTHING_TO_BOOK = /\bnothing (?:for you |for us )?to (?:book|post|do)\b|\bno (?:need to (?:book|post)|action (?:is )?(?:needed|required))\b|\b(?:do not|don['\u2019]t|please don['\u2019]t) (?:book|post) (?:it|this|the)\b|\b(?:is|has|have) already been (?:booked|posted)\b|(?:^|[^a-zäöüß])nichts zu (?:buchen|verbuchen|tun)(?![a-zäöüß])|(?:^|[^a-zäöüß])keine buchung (?:nötig|notwendig|erforderlich)(?![a-zäöüß])|(?:^|[^a-zäöüß])bitte nicht (?:buchen|verbuchen)(?![a-zäöüß])|(?:^|[^a-zäöüß])kein handlungsbedarf(?![a-zäöüß])|(?:^|[^a-zäöüß])(?:ist|sind|wurde|wurden) (?:bereits|schon) (?:gebucht|verbucht)(?![a-zäöüß])/i;
 // the writer has already collected the amount from the reader ("has already been deducted from your settlement payouts",
 // "debited from your account", "wurde mit Ihrer Auszahlung verrechnet"): the reader paid, by deduction or debit
 const READER_COLLECTED = /\b(?:deducted|offset|netted|withheld|debited|collected|charged)\b[^.!?\n]{0,30}?\b(?:from|against|to) your (?:[a-z-]+ ){0,2}(?:payouts?|settlements?|disbursements?|balance|account|card|credit)\b|(?:^|[^a-zäöüß])(?:von|mit) ihre[rnm]? (?:[a-zäöüß-]+ ){0,2}(?:auszahlung(?:en)?|abrechnung(?:en)?|guthaben|konto|kreditkarte)(?![a-zäöüß])[^.!?\n]{0,30}?(?:abgezogen|einbehalten|verrechnet|abgebucht|eingezogen)(?![a-zäöüß])/i;
@@ -16289,6 +16742,36 @@ function mailResult(mail: MailScan, kw: string, subject: string): AvisResult {
       break;
     }
   }
+  // a colleague's mail that passes an advice on and says in its own text, above the forwarded or quoted mail, that the mailbox
+  // has nothing to book (NOTHING_TO_BOOK): for a check, not an advice to book
+  if (internalMail(mail)) {
+    let nb = "";
+    for (const d of docs) {
+      if (!d.body || d.name !== "body") continue;
+      const ls = d.res.text.split("\n");
+      const head: string[] = [];
+      for (let i = 0; i < ls.length && i < 60 && !FORWARD_START.test(ls[i]); i++) head.push(ls[i]);
+      const nm = NOTHING_TO_BOOK.exec(head.join("\n"));
+      if (nm !== null) nb = nm[0];
+    }
+    for (const d of docs) {
+      if (nb === "" || (d.verdict !== "advice" && d.verdict !== "several")) continue;
+      d.verdict = "unclear";
+      d.why = d.why + ", but the colleague who passes it on writes '" + shortQuote(nb) + "'";
+    }
+  }
+  // a platform's payout to the writer, passed on with the writer's own payment announced for later (OWN_PAYOUT, PAY_LATER):
+  // the payout notice or statement and the mail text without advice evidence of its own are no advice
+  let ownPayout = "";
+  for (const d of docs) {
+    const om = d.body ? OWN_PAYOUT.exec(d.res.text) : null;
+    if (om !== null && PAY_LATER.test(d.res.text)) ownPayout = om[0];
+  }
+  for (const d of docs) {
+    if (ownPayout === "" || d.verdict === "other" || !(/payout|auszahlung/i.test(d.positive) || (d.body && !d.payer && d.positive === ""))) continue;
+    d.verdict = "other";
+    d.why = "payout to the writer ('" + shortQuote(ownPayout) + "'), its own payment announced - not a payment to the reader (" + d.why + ")";
+  }
   // a mail text with payment words but no amount beside attachments that are all something else (a credit note, an
   // invoice): the attachments say what the mail is
   // (an account statement may be the payer's proof of payment: it does not count as something else here)
@@ -16347,6 +16830,10 @@ function mailResult(mail: MailScan, kw: string, subject: string): AvisResult {
       // amount, e.g. an advice as an inline picture, stays for a check), unless it reads like a newsletter (news, a webinar,
       // an example advice)
       if (auto === "mailing list" && d.body && !newsletterLike(d.res) && ((d.res.ok && (d.verdict === "advice" || d.verdict === "several") && (d.strong || d.payer || d.positive !== "")) || (d.strong && d.verdict === "unclear"))) continue;
+      // (so is the portal's file with a payer's or portal's payment statement and a trusted amount: a card acquirer's
+      // settlement "Der Auszahlungsbetrag wird mit Wertstellung 30.10.2026 auf Ihr Konto ... überwiesen"; not a payment label
+      // alone, which also ends a shop's receipt)
+      if (notice && !d.body && d.payer && d.res.ok && d.res.confidence !== "low" && (d.verdict === "advice" || d.verdict === "several") && !newsletterLike(d.res)) continue;
       // a chat message that reads as an advice with an amount (a payer statement "We have transferred EUR 1,204.00 today",
       // an advice title, a payment table) may come from a customer in a shared channel: it stays for a check; payment talk
       // without advice evidence is the colleagues' discussion
