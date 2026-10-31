@@ -16499,6 +16499,11 @@ function decideMail(docs: DocResult[], hint: string, noDocError: string): AvisRe
       res.verdictWhy = docs.length === 0 ? "no document to check" : "no advice: " + (why.length > 400 ? why.substring(0, 397) + "..." : why);
     }
   }
+  // the quoted phrases of the reasons with the dots of their numbers and dates as written ("4.812,37", "29.10.2026")
+  const dotted: string[] = [];
+  for (const d of docs) dotted.push(d.res.text);
+  res.verdictWhy = quotesWithDots(res.verdictWhy, dotted);
+  for (let i = 0; i < lines.length; i++) lines[i] = quotesWithDots(lines[i], dotted);
   res.documents = lines;
   let total = 0;
   for (const d of docs) total += d.res.textLength;
@@ -16671,6 +16676,48 @@ function groupDomains(a: string, b: string): boolean {
   const ka = domainKeys("@" + a), kb = domainKeys("@" + b);
   if (ka.length !== 1 || kb.length !== 1 || ka[0] === kb[0]) return false;
   return ka[0].indexOf(kb[0] + "-") === 0 || kb[0].indexOf(ka[0] + "-") === 0;
+}
+
+function quotesWithDots(reason: string, texts: string[]): string {
+  // The reason with its quoted phrases ('...') as they stand in the texts: the phrases were cut from text whose numbers
+  // and dates had lost their dots ("über 4812,37 EUR", "am 29102026"). A phrase with three or more digits in a row is
+  // looked up in the texts with every dot removed and whitespace collapsed on both sides, and replaced by the original
+  // span; a truncated phrase ("...") keeps its ending. Phrases that are not found stay as they are.
+  if (reason.indexOf("'") < 0 || !/\d{3}/.test(reason)) return reason;
+  const re = /'([^']{6,})'/g;
+  let out = "";
+  let last = 0;
+  let m: RegExpExecArray | null;
+  for (let guard = 0; guard < 20 && (m = re.exec(reason)) !== null; guard++) {
+    let q = m[1];
+    const cut = q.length > 3 && q.substring(q.length - 3) === "...";
+    if (cut) q = q.substring(0, q.length - 3);
+    const key = q.replace(/\./g, "").replace(/\s+/g, " ").trim();
+    let found = "";
+    if (/\d{3}/.test(key) && key.length >= 4) {
+      for (let k = 0; k < texts.length && found === ""; k++) {
+        const s = texts[k].length > 400000 ? texts[k].substring(0, 400000) : texts[k];
+        // (flat: s without dots and with one space for each whitespace run; at: the index in s of every flat character)
+        let flat = "";
+        const at: number[] = [];
+        let space = false;
+        for (let i = 0; i < s.length; i++) {
+          const c = s.charAt(i);
+          if (c === ".") continue;
+          if (c === " " || c === "\n" || c === "\r" || c === "\t" || c === "\u00a0") { if (!space && flat.length > 0) { flat += " "; at.push(i); } space = true; continue; }
+          space = false;
+          flat += c;
+          at.push(i);
+        }
+        const p = flat.indexOf(key);
+        if (p < 0 || p + key.length - 1 >= at.length) continue;
+        found = s.substring(at[p], at[p + key.length - 1] + 1).replace(/\s+/g, " ");
+      }
+    }
+    out += reason.substring(last, m.index) + "'" + (found !== "" ? found + (cut ? "..." : "") : m[1]) + "'";
+    last = m.index + m[0].length;
+  }
+  return out + reason.substring(last);
 }
 
 function paymentRequestReply(subject: string, quoted: string[], mail: MailScan): boolean {
