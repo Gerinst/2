@@ -1,6 +1,6 @@
 # Avis-Flow Version 2 Schritt für Schritt
 
-Diese Anleitung baut den Flow für ein **freigegebenes Postfach** (Exchange Shared Mailbox). Jede neue Mail geht als Ganzes an das Skript: PDF-Anlagen, Excel- und CSV-Dateien, SAP-Exporte und der Mailtext. Ist die Mail ein Zahlungsavis, bekommt die **Original-Mail** die Kategorie „Avise" und den Betrag hinten an den Betreff. Andere Mails bleiben unberührt. Es kommen keine zusätzlichen Mails.
+Diese Anleitung baut den Flow für ein **freigegebenes Postfach** (Exchange Shared Mailbox). Jede neue Mail geht als Ganzes an das Skript: PDF-Anlagen, Excel- und CSV-Dateien, SAP-Exporte und der Mailtext. Ist die Mail ein Zahlungsavis, bekommt die **Original-Mail** die Kategorie „Avise" und den Betrag vorne in den Betreff. Andere Mails bleiben unberührt. Es kommen keine zusätzlichen Mails.
 
 Alle Klickwege in dieser Anleitung sind am 30.10.2026 in einem Microsoft-365-Testzugang mit genau diesem Skript und diesem Flow nachgegangen worden (12 Test-Mails, 12 richtige Ergebnisse). Einen klickbaren Nachbau des Flows mit allen Feldern, Einstellungen und Formeln zum Kopieren gibt es in `dist/avis-flow.html` (herunterladen und im Browser öffnen).
 
@@ -8,15 +8,15 @@ Alle Klickwege in dieser Anleitung sind am 30.10.2026 in einem Microsoft-365-Tes
 
 | Ergebnis des Skripts | Kategorie | Betreff danach |
 | --- | --- | --- |
-| Ein Avis, Betrag sicher | Avise | `Zahlungsavis - 2.601,35 EUR` |
-| Ein Avis, Betrag ziemlich sicher | Avise | `Zahlungsavis - 2.601,35 EUR (prüfen)` |
-| Ein Avis, Betrag unsicher | Avis prüfen | `Zahlungsavis - 2.601,35 EUR ?` |
+| Ein Avis, Betrag sicher | Avise | `2.601,35 EUR - Zahlungsavis` |
+| Ein Avis, Betrag ziemlich sicher | Avise | `2.601,35 EUR (prüfen) - Zahlungsavis` |
+| Ein Avis, Betrag unsicher | Avis prüfen | `2.601,35 EUR ? - Zahlungsavis` |
 | Mehrere Avise in einer Mail | mehrere Avise | unverändert |
 | Unklar: Avis-Hinweis, aber nicht lesbar (Scan, verschlüsselt, altes .xls) oder nicht sicher erkennbar | Avis prüfen | unverändert |
 | Skript-Fehler oder Zeitüberschreitung | Avis prüfen | unverändert |
 | Kein Avis (Rechnung, Reklamation, Bestellung, Info, Mahnung …) | keine | unverändert |
 
-„Zahlungsavis" steht hier für den Betreff, den der Absender geschrieben hat. Er bleibt vorne stehen, der Betrag kommt immer im deutschen Format mit Währung dahinter.
+„Zahlungsavis" steht hier für den Betreff, den der Absender geschrieben hat. Er bleibt vollständig erhalten; der Betrag steht immer davor, im deutschen Format mit Währung und „ - " als Trenner.
 
 Der Flow in Kurzform:
 
@@ -77,7 +77,7 @@ Damit prüfst du vorab, ob Vollzugriff und Betreffänderung im Postfach funktion
    - **URI**: ins Feld klicken → **fx** → Formel aus `formeln/URI_Kategorie_und_Betreff.txt` (mit eurer Adresse) → **Hinzufügen**
    - **Methode**: `PATCH`
    - **Erweiterte Parameter** → **Alle anzeigen** → **Text**: `{"categories":["Avise"]}`
-4. Zweite gleiche Aktion, nur **Text**: `{"subject":"PATCHTEST Zahlungsavis - 2.601,35 EUR"}`.
+4. Zweite gleiche Aktion, nur **Text**: `{"subject":"2.601,35 EUR - PATCHTEST Zahlungsavis"}`.
 5. **Speichern**. Aus dem eigenen Postfach eine Mail mit Betreff `PATCHTEST Zahlungsavis` an `avis@firma.de` schicken und 1 bis 5 Minuten warten.
 6. Richtig: In Outlook hat die Mail den neuen Betreff und die Kategorie „Avise", im Ausführungsverlauf sind beide Aktionen grün. Fehler: siehe Fehlertabelle (403, 404, 400).
 7. Danach den Testflow ausschalten: Meine Flows → `PATCHTEST` → **⋯** → **Deaktivieren**.
@@ -203,7 +203,7 @@ Was das Skript zurückgibt:
 | `verdict` | `advice` (ein Avis), `several` (mehrere), `unclear`, `other` (kein Avis) |
 | `verdictWhy` | Kurzer Grund auf Englisch, z. B. `advice title 'Zahlungsavis' in Zahlung_4711.pdf` (Anhang B) |
 | `category` | `Avise`, `Avis prüfen`, `mehrere Avise` oder leer |
-| `subjectSuffix` / `newSubject` | Anhang an den Betreff / der fertige neue Betreff (leer = keine Änderung) |
+| `subjectPrefix` / `newSubject` | Betrag vor dem Betreff (z. B. `2.601,35 EUR - `) / der fertige neue Betreff (leer = keine Änderung) |
 | `patchCategory` / `patchSubject` | Fertiger Text für Kategorie_setzen und Betreff_setzen (leer = nichts tun) |
 | `documents` | Je geprüftem Dokument eine Zeile: Name, Art, Urteil, Betrag, Sicherheit, Grund |
 | `amount`, `amountNumber`, `currency`, `confidence`, `line`, `method`, `candidates`, `pages`, `text`, `textLength`, `warnings`, `error` | Wie in Version 1, zur Fehlersuche (Gründe und Hinweise: Anhang B) |
@@ -216,14 +216,14 @@ Was das Skript zurückgibt:
 
 ## Im Alltag
 
-- **Avise:** Betrag im Betreff. Endet er auf „(prüfen)", ist sich das Skript nur ziemlich sicher (z. B. Avis nur im Mailtext). In den ersten Wochen jede Avis-Mail kurz gegen das Dokument halten.
+- **Avise:** Betrag vorne im Betreff. Steht dahinter „(prüfen)", ist sich das Skript nur ziemlich sicher (z. B. Avis nur im Mailtext). In den ersten Wochen jede Avis-Mail kurz gegen das Dokument halten.
 - **Avis prüfen:** Steht ein Betrag mit „?" im Betreff, ist er ein Vorschlag. Ohne Betrag: Mail öffnen und von Hand buchen. Den Grund zeigt der Ausführungsverlauf bei Run script (`result.error`, `result.verdictWhy`, Anhang B).
 - **mehrere Avise:** Die Mail enthält zwei oder mehr Avise mit verschiedenen Beträgen. Beträge von Hand buchen; der Betreff bleibt unverändert.
 - **Keine Kategorie:** kein Avis, oder der Flow ist an dieser Mail nicht gelaufen (Ausführungsverlauf prüfen).
 - **Suchen:** Den Betrag ins Outlook-Suchfeld eintippen, z. B. `2.601,35`.
-- **Antworten:** Wer auf eine bearbeitete Mail antwortet, schickt den Betrag im Betreff mit („AW: Zahlungsavis - 2.601,35 EUR").
-- Ein Betreff, der schon mit dem Betrag endet, wird kein zweites Mal ergänzt.
-- Eine Mail ohne Betreff bekommt „(Kein Betreff) - 2.601,35 EUR" (so zeigt Outlook leere Betreffzeilen an). Sehr lange Betreffzeilen werden ebenfalls ergänzt (live getestet mit 250 Zeichen).
+- **Antworten:** Wer auf eine bearbeitete Mail antwortet, schickt den Betrag im Betreff mit („AW: 2.601,35 EUR - Zahlungsavis").
+- Ein Betreff, der schon mit dem Betrag beginnt (auch nach „AW:" oder „WG:") oder mit dem Betrag endet (so haben ältere Versionen geschrieben), wird kein zweites Mal ergänzt.
+- Eine Mail ohne Betreff bekommt nur den Betrag als Betreff („2.601,35 EUR"; Outlook zeigt leere Betreffzeilen sonst als „(Kein Betreff)"). Sehr lange Betreffzeilen werden ebenfalls ergänzt (live getestet mit 250 Zeichen).
 - **Zwei Läufe für eine Mail:** Bei vielen gleichzeitig eintreffenden Mails startet Power Automate manchmal zwei Läufe für dieselbe Mail (im Lasttest bei 20 von 40 Mails). Das schadet nicht: Der zweite Lauf setzt dieselbe Kategorie und denselben Betreff, der Betrag steht nie doppelt im Betreff.
 
 ## Fehler finden
@@ -255,6 +255,7 @@ Microsoft hat angekündigt, ab dem 31.12.2026 Änderungen an Betreff und Text em
 - Sehr große Mails (über etwa 4 MB) können am Größenlimit scheitern und bekommen dann „Avis prüfen".
 - Nicht lesbar: reine Scans ohne Text (keine Texterkennung), verschlüsselte Mails und PDFs mit Kennwort, altes Excel-Format .xls, Word-Dateien, mit Microsoft Purview geschützte Mails. Sie bekommen „Avis prüfen", wenn ein Hinweis auf ein Avis da ist.
 - Bilder als Anlage (Foto, Fax als TIFF/JPG) werden nicht gelesen.
+- Eigene Zahlungsavise: Schickt eure Kreditorenbuchhaltung ihre Avise an Lieferanten in Kopie (BCC) an das Avis-Postfach, sehen sie für das Skript aus wie ein Kunden-Avis und bekommen „Avise". Das Skript weiß nicht, welche Firma ihr seid. Abhilfe: die Kopie abstellen oder in Keine_Automatik eine sechste Zeile ergänzen: links Blitz → **Von**, Mitte **enthält nicht**, rechts die Absenderadresse der Kreditorenbuchhaltung.
 - Je Mail liest das Skript höchstens 30 Anlagen (Dateien mit „Avis" oder „Zahlungsavis" im Namen zuerst). Hat eine Mail mehr, bekommt sie „Avis prüfen", wenn unter den gelesenen kein Avis war.
 
 ## Anhang A: Alle Formeln zum Kopieren
@@ -368,6 +369,7 @@ Mit der ganzen Mail prüft das Skript jede PDF, jede andere lesbare Anlage und d
 | `not a PDF (header missing, …) - read as …: …` | Statt einer PDF kam eine Tabelle, eine HTML- oder Textdatei; nach dem Doppelpunkt steht, warum darin kein Betrag gefunden wurde | Datei von Hand öffnen |
 | `no text` | Ein Mailtext oder eine Textdatei ist leer | – |
 | `uncertain: total computed from … rows of column '…'` | Eine Zahlungsliste ohne Summenzeile: Das Skript hat die Zahlbetrag-Spalte selbst addiert (Zahl der Zeilen und Spaltenname in der Meldung). Das kommt auch, wenn das Skript sonst nur eine einzelne Zeile der Liste gefunden hätte | Summe mit der Liste vergleichen |
+| `…, the mail text states the same amount` (in `result.verdictWhy`) | Die Tabelle hat keine Summenzeile, das Skript hat die Zahlbetrag-Spalte selbst addiert, und der Mailtext nennt genau diesen Betrag. Damit gilt der Betrag als sicher (Kategorie „Avise" ohne Zusatz) | – |
 | `uncertain: list read in part - total not computed` | Eine Zahlungsliste ohne Summenzeile ist länger als 5000 Zeilen (oder das Zeitlimit war erreicht). Eine selbst addierte Summe wäre unvollständig, daher kein Betrag im Betreff; die Mail wird „Avis prüfen" | Summe in der Liste von Hand bilden |
 | `uncertain: total row differs from the sum of column '…' (…, … rows)` | Die Summenzeile einer Tabelle passt nicht zur Summe der Zahlbetrag-Spalte (in der Klammer: die nachgerechnete Summe und die Zahl der Zeilen) | Summe mit der Liste vergleichen |
 | `old Excel .xls format (…) cannot be read - save it as .xlsx` | Altes Excel-Format (Excel 97-2003, 5.0/95 oder 2-4). Die Mail wird „Avis prüfen" | Anlage von Hand öffnen, Betrag von Hand. Absender bitten, künftig .xlsx, CSV oder PDF zu schicken |
@@ -388,6 +390,8 @@ Mit der ganzen Mail prüft das Skript jede PDF, jede andere lesbare Anlage und d
 | `mail parts not read (nested too deep, too many parts or a missing boundary)` | Teile der Mail konnten nicht gelesen werden: sehr oft als Anlage weitergeleitet (über etwa 14 Ebenen), mehr als 5000 Teile oder eine kaputte MIME-Struktur. Die Mail wird „Avis prüfen" | Mail von Hand öffnen |
 | `mail could not be parsed` | Die Eingabe beginnt wie eine Mail, ihr Kopf ließ sich aber nicht lesen | Mail von Hand öffnen |
 | `e-invoice XML` | Eine XRechnung oder ZUGFeRD-/Factur-X-Datei (XML). Sie ist eine Rechnung, kein Avis, und zählt nicht | – |
+| `HTML file with a sign-in form - possible phishing` | Eine angehängte HTML-Datei enthält ein Passwortfeld (gefälschte Anmeldeseite, typisch für Phishing mit „Remittance Advice"). Die Mail wird „Avis prüfen", nie „Avise" | Mail nicht anklicken, Absender prüfen; im Zweifel an die IT melden |
+| `…, but … is a sign-in page (possible phishing)` | Mailtext oder ein Dokument sieht wie ein Avis aus, aber eine Anlage ist eine Anmeldeseite. Deshalb zählt nichts als Avis | Wie oben |
 
 | Hinweis (englisch) | Bedeutung |
 | --- | --- |

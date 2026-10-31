@@ -31,8 +31,8 @@ interface AvisResult {
   verdict: string;        // advice (exactly one advice) / several (advices with different amounts) / unclear / other
   verdictWhy: string;     // short English reason
   category: string;       // Outlook category: "Avise" / "Avis prüfen" / "mehrere Avise" / "" (none)
-  subjectSuffix: string;  // " - 2.601,35 EUR", " - 2.601,35 EUR (prüfen)", " - 2.601,35 EUR ?" or ""
-  newSubject: string;     // subject + suffix, "" when the subject stays as it is
+  subjectPrefix: string;  // "2.601,35 EUR - ", "2.601,35 EUR (prüfen) - ", "2.601,35 EUR ? - " or ""
+  newSubject: string;     // prefix + subject ("2.601,35 EUR - Zahlungsavis"), "" when the subject stays as it is
   patchCategory: string;  // JSON body {"categories":[...]} for the HTTP request, "" when no category is set
   patchSubject: string;   // JSON body {"subject":"..."} for the HTTP request, "" when the subject stays as it is
   documents: string[];    // one line per checked document: name | type | verdict | amount currency | confidence | note
@@ -6027,6 +6027,10 @@ const DEDUCTION_KEYWORDS = /skonto|abzug|abzgl|abzüglich|\.\/\.|einbehalt|gebü
 const UNIT_AFTER = /^\s?(?:kg|g|t|to|st|stk|stck|stück|pal|paletten|m|m2|m3|qm|cbm|l|ltr|liter|km|std|min|%|prozent|pct|pcs|pc|ea|lbs?)(?![A-Za-zÄÖÜäöüß0-9])/i;
 const UNIT_AFTER_H = /^\s?h(?![A-Za-zÄÖÜäöüß0-9])/; // hours, lower case only
 // (a whole word, except "nr" as in "Rechnungsnr." - "zapłacono" / "uhrazeno" are no "No.")
+// a part payment named as what is paid ("Anzahlung", "Abschlagszahlung", "down payment")
+const PART_PAYMENT = /anzahlung|abschlagszahlung|teilzahlung|vorzahlung|ratenzahlung|restzahlung|schlusszahlung|down payment|advance payment|partial payment|instal{1,2}ment/i;
+// a company's share capital right before an amount (legal footer "Grundkapital 25.000.000,00 EUR"): never a payment
+const CAPITAL_BEFORE = /(?:(?:grund|stamm|aktien|kommandit|haft)kapital|gezeichnetes kapital|share capital|capital stock|capital social|capitale sociale|kapitał zakładowy|maatschappelijk kapitaal|geplaatst kapitaal|základní kapitál)\s*(?:(?:von|of|de|in höhe von)\s+)?[:=]?\s*(?:EUR|€|CHF|USD|GBP|PLN|zł|CZK|Kč)?\s*$/i;
 const NUMBER_LABEL_BEFORE = /(?:nr|(?:^|[^a-zäöüßà-ž])(?:no|rg|re|rechnung|pos|position|beleg|invoice|inv|art|artikel|kd|kunde|anzahl|menge|stk|stück)|#)\.?:?\s*$/i;
 const CURRENCY_TOKEN = /\b(?:EUR|CHF|USD|GBP|PLN|CZK|SEK|DKK|NOK|HUF|RON|BGN|JPY|CNY|CAD|AUD|TRY)\b|€|\$|£|¥|zł|Kč|\b[Ee][Uu][Rr][Oo]\b|\bSFr\b|\bFr\.(?= ?\d)/g;
 const PAYMENT_MARKER = /payout|paid out|disburse|amount transferred|funds transferred|transfer to (?:your )?bank|zahlung|zahlbetrag|\bzahlen|gezahlt|bezahlt|überw|ueberw|gutschrift|gutgeschrieben|ausgleich|beglichen|begleichen|skonto|payment|remittance|\bpaid\b|remitted|auszahlung|credited|credit advice|incoming payment|check no|check date|check amount|cheque|pay to the order/i;
@@ -6038,12 +6042,12 @@ const NON_PAYMENT_MARKER = /lieferschein|lieferavis|versandavis|versandanzeige|a
 // title of a payment advice: the document checks below trust it (a title in another language only together with a
 // payment statement: "avviso di pagamento" / "aviso de pago" are also bills)
 const DE_EN_AVIS_TITLE = /zahlungsavis|payment advice|remittance advice|zahlungsmitteilung|erstattungsmitteilung|gutschriftsanzeige|zahlungsfreigabe|auszahlungsmitteilung|auszahlungsanzeige|regulierungsmitteilung|regulierungsschreiben|schadenregulierung|schadenabrechnung|entschädigungsabrechnung|überweisungsavis|ueberweisungsavis|zahlungsbenachrichtigung|zahlungsanzeige|vergütungsanzeige|verguetungsanzeige|payment notification/i;
-const AVIS_TITLE = /zahlungsavis|payment advice|remittance advice|zahlungsmitteilung|erstattungsmitteilung|gutschriftsanzeige|zahlungsfreigabe|auszahlungsmitteilung|auszahlungsanzeige|regulierungsmitteilung|regulierungsschreiben|schadenregulierung|schadenabrechnung|entschädigungsabrechnung|überweisungsavis|ueberweisungsavis|zahlungsbenachrichtigung|zahlungsanzeige|vergütungsanzeige|verguetungsanzeige|payment notification|avis de (?:paiement|virement|règlement|reglement)|betalingsadvies|betalingsbericht|avviso di (?:pagamento|bonifico)|aviso de (?:pago|transferencia|pagamento)|awizo (?:płatności|przelewu|zapłaty)|potwierdzenie (?:płatności|przelewu)|avízo o platbě|platební avízo|oznámení o (?:platbě|úhradě)|betalingsadvis|betalingsavis|betalningsavi/i;
+const AVIS_TITLE = /zahlungsavis|payment advice|remittance advice|zahlungsmitteilung|erstattungsmitteilung|gutschriftsanzeige|zahlungsfreigabe|auszahlungsmitteilung|auszahlungsanzeige|regulierungsmitteilung|regulierungsschreiben|schadenregulierung|schadenabrechnung|entschädigungsabrechnung|überweisungsavis|ueberweisungsavis|zahlungsbenachrichtigung|zahlungsanzeige|vergütungsanzeige|verguetungsanzeige|payment notification|avis de (?:paiement|virement|règlement|reglement)|betalingsadvies|betalingsbericht|avviso di (?:pagamento|bonifico)|aviso de (?:pago|transferencia|pagamento)|awizo (?:płatności|przelewu|zapłaty)|potwierdzenie (?:wykonania |realizacji )?(?:płatności|przelewu|transakcji)|avízo o platbě|platební avízo|oznámení o (?:platbě|úhradě)|betalingsadvis|betalingsavis|betalningsavi|betaalspecificatie|betalingsspecificatie|betaaladvies|potvrzení o (?:platbě|úhradě|provedení platby)|avízo o platbe|potvrdenie o (?:platbe|úhrade)|maksuilmoitus|maksuerittely|maksuaviisi|fizetési értesítő|átutalási értesítő|aviz de plat[ăa]|confirmare (?:de )?plat[ăa]|ödeme bildirimi/i;
 // title of a bank transfer form (order confirmation of the payer's bank, "Avis zur SEPA-Überweisung")
-const TRANSFER_TITLE = /überweisung|ueberweisung|ausführungsbestätigung|zahlungsauftrag|payment order|wire transfer|transfer confirmation|credit transfer|virement|bonifico|transferencia|przelew|převod/i;
-const TRANSFER_FIELD = /^(?:betrag|überweisungsbetrag|ueberweisungsbetrag|auftragsbetrag|amount|transfer amount|montant|importo|importe|kwota|částka)\s*(?:\(?(?:eur|chf|usd|gbp|€)\)?)?\s*:?\s*(?:eur|chf|usd|gbp|€)?\s*$/i;
+const TRANSFER_TITLE = /überweisung|ueberweisung|ausführungsbestätigung|zahlungsauftrag|payment order|wire transfer|transfer confirmation|credit transfer|virement|bonifico|transferencia|przelew|převod|swift (?:message |mt ?103 )?copy|swift confirmation|\bmt ?103\b|single customer credit transfer|funds transfers?|application for (?:outward |overseas )?(?:funds transfers?|remittance)|outward remittance|telegraphic transfer/i;
+const TRANSFER_FIELD = /^(?:betrag|überweisungsbetrag|ueberweisungsbetrag|auftragsbetrag|amount|transfer amount|montant|importo|importe|kwota|částka|:32a:\s*\d{6}|(?:currency (?:&|and) )?interbank settle(?:d|ment) amount|amount remitted|remittance amount|settlement amount)\s*(?:\(?(?:eur|chf|usd|gbp|€)\)?)?\s*:?\s*(?:eur|chf|usd|gbp|€)?\s*$/i;
 // fields of a bank posting (two of them make a "Gutschrift" a bank credit, not a supplier credit note)
-const BANK_FIELD = /buchungstag|buchungsdatum|valuta|wertstellung|auftraggeber|ordering customer|value date|begünstigter|beneficiary|zahlungsempfänger|\bempfänger\b|empfänger-iban|iban empfänger/gi;
+const BANK_FIELD = /buchungstag|buchungsdatum|valuta|wertstellung|auftraggeber|ordering customer|value date|begünstigter|beneficiary|zahlungsempfänger|\bempfänger\b|empfänger-iban|iban empfänger|rachunek (?:nadawcy|odbiorcy|zleceniodawcy|beneficjenta)|data (?:operacji|księgowania|waluty)|zleceniodawca|beneficjent|opdrachtgever|begunstigde|valutadatum|rentedatum|donneur d'ordre|bénéficiaire|date de valeur|ordinante|beneficiario|data valuta|ordenante|fecha (?:de )?valor|plátce|účet příjemce|datum zaúčtování|remitter|ordering institution|:50[afk]:|:59[af]?:|:57[a-d]:|:32a:/gi;
 // other document types in the title area (first lines of page 1, larger font)
 const OTHER_TITLE = /mahnung|zahlungserinnerung|zahlungsaufforderung|letzte aufforderung|forderungsaufstellung|inkassoauftrag|inkassoforderung|mahnbescheid|vollstreckungsbescheid|zahlungsbefehl|payment reminder|reminder\b|overdue|final notice|dunning|\brappel\b|relance|herinnering|aanmaning|sollecito|recordatorio de pago|requerimiento de pago|wezwanie do zapłaty|upomnienie|upomínka|výzva k (?:úhradě|zaplacení)|rykker|påminnelse|påmindelse|stornorechnung|\bstorno\b|rechnungskorrektur|korrekturrechnung|angebot|quotation|\bquote\b|kostenvoranschlag|kostenangebot|\bofferte\b|\bdevis\b|preventivo|presupuesto|nabídka|auftragsbestätigung|auftragsbestaetigung|order confirmation|bestellbestätigung|bestätigung ihrer bestellung|purchase order|bestellschreiben|einkaufsbestellung|bon de commande|orden de compra|ordine d'acquisto|versandbestätigung|versandmitteilung|shipping confirmation|shipment notification|ist unterwegs|wurde versandt|has (?:been )?shipped|lieferschein|lieferavis|versandavis|delivery note|packing list|packliste|arrival notice|notice of arrival|ankunftsmeldung|ankunftsavis|avis d'arrivée|container arrival|bill of lading|frachtbrief|verzollungsavis|zollavis|zollanmeldung|abgabenmitteilung|einfuhrabgaben|zollbescheid|customs (?:clearance|entry|notice|invoice)|import duty|pro-?forma|abschlagsrechnung|teilrechnung|schlussrechnung|vorauszahlungsrechnung|anzahlungsrechnung|gehaltsabrechnung|entgeltabrechnung|lohnabrechnung|verdienstabrechnung|bezügemitteilung|bezügeabrechnung|brutto[/-]netto|lohn- und gehalt|payslip|pay slip|salary (?:statement|slip)|earnings statement|reisekostenabrechnung|reisekosten|spesenabrechnung|travel expense|expense (?:report|claim)|kontoauszug|account statement|bank statement|statement of account|saldenbestätigung|saldenabstimmung|saldenmitteilung|(?:kreditkarten|firmenkarten)abrechnung|abrechnung ihrer (?:firmen)?kreditkarte|ihrer firmenkreditkarte|credit card statement|preisliste|price list|allgemeine (?:geschäfts|verkaufs|liefer|einkaufs)|geschäftsbedingungen|terms and conditions|abholavis|benachrichtigungskarte|nachnahme|zahlungsplan|abschlagsplan|tilgungsplan|ratenplan|ratenzahlungsvereinbarung|ratenvereinbarung|teilzahlungsvereinbarung|stundungsvereinbarung|instal?lment (?:plan|agreement)|lastschrift|vorabankündigung|pre-?notification|rückgabe|rücküberweisung|rückbuchung|zurückgegeben|nicht ausgeführt|abgelehnt|returned|rejected|überweisungsträger|überweisungsvordruck|zahlschein|einzahlungsschein|zahlteil|empfangsschein|payment slip|relevé de compte|relevé bancaire|estratto conto|extracto de cuenta|extracto bancario|rekeningafschrift|bankafschrift|wyciąg bankowy|wyciąg z rachunku|výpis z účtu|bankovní výpis|kontoudtog|kontoutdrag|bulletin de (?:paie|salaire)|fiche de paie|cedolino|busta paga|\bnómina\b|loonstrook|salarisstrook|mise en demeure|ingebrekestelling|pagopa|avis d'échéance|avis de prélèvement|umsatzübersicht|umsatzliste|kontoumsätze|account activity|transaction history|auszahlungsvorschau|payout preview|payout forecast|vorläufige abrechnung|zahlungsvorschlag/i;
 // a title word right after one of these refers to another document ("Zahlung zu Ihrer Schlussrechnung")
@@ -6098,7 +6102,7 @@ const PAYEE_SECOND = /\bsie haben\b[^.]{0,40}\bunsere (?:rechnung(?:en)?|forderu
 const REFUND_WORD = /^\s*(?:ihre |die |der |your |the )?(?:rückzahlung|rückerstattung|erstattung|gutschrift|refund|credit note)/i;
 // open items of the payee's ledger ("Summe offene Posten", "Saldo offene Posten", "open items"): an open amount, never the
 // payment; OPEN_SETTLED: "Ausgleich offener Posten" in an advice is the payment
-const OPEN_ITEMS = /offene[nr]? posten|\bop-?(?:liste|saldo)\b|open items|outstanding items/i;
+const OPEN_ITEMS = /offene[nr]? posten|offene rechnungen|\bop-?(?:liste|saldo)\b|open items|outstanding items|open invoices|outstanding invoices|open balance|outstanding balance/i;
 const OPEN_SETTLED = /ausgleich|ausgegl|begleich|beglichen|bezahlt|gezahlt|zahlung|zahlbetrag|überw|ueberw|paid|payment|remit|settle/i;
 // reference fields and phrases: the document named after them is the other party's document ("Ihr Zeichen: Mahnung vom
 // 06.10.2026", "bezugnehmend auf Ihre Mahnung"), not this document's title
@@ -6269,6 +6273,12 @@ function normalizeLine(line: string): string {
   // group separators between digits (no-break, thin, narrow, figure spaces, apostrophes) – before NFKC turns them into spaces
   let s = line.replace(/(\d)[\u00A0\u2007\u2008\u2009\u200A\u202F'\u2019\u02BC\u00B4`](?=\d{3}(?!\d))/g, "$1" + GROUP_MARK);
   s = s.normalize("NFKC").replace(/\u2212/g, "-").replace(/\t/g, " ");
+  // a currency code glued to an amount ("USD56,780.00", SWIFT field ":32A:261029EUR27315,00"): spaces around the code
+  s = s.replace(/(\d)(EUR|USD|GBP|CHF|CNY|JPY|PLN|CZK|SEK|DKK|NOK|HUF|RON|AED|CAD|AUD|TRY)(?=\d)/g, "$1 $2 ").replace(/\b(EUR|USD|GBP|CHF|CNY|JPY|PLN|CZK|SEK|DKK|NOK|HUF|RON|AED|CAD|AUD|TRY)(?=\d)/g, "$1 ");
+  // OCR misreadings of a scanned advice: the letter O inside a number ("2.6O1,35"), a lost umlaut and q for g in the
+  // label ("Uberweisungsbetraq")
+  if (/\dO/.test(s)) s = s.replace(/(\d)O(?=[\dO]|[.,]\d)/g, "$10").replace(/(\d)O(?=[\dO]|[.,]\d)/g, "$10");
+  s = s.replace(/\bUberweis/g, "Überweis").replace(/\buberweis/g, "überweis").replace(/betraq\b/g, "betrag");
   if (s.indexOf(GROUP_MARK) >= 0) {
     const reG = /\d+(?:\u0001\d{3})+([.,]\d{2}(?!\d))?/g;
     let out = "", last = 0;
@@ -6364,31 +6374,45 @@ function detectEnglishFormat(lines: string[]): boolean {
 }
 
 function findAmountsInLine(line: string, english: boolean): AmountMatch[] {
+  // Amounts in the document's number format, then the unambiguous spellings of the other format ("2,456.47" in a German
+  // letter, "2.456,47" in an English one, a dot for the decimals "2.456.47"; a plain "2456.47" only next to a currency)
   const out: AmountMatch[] = [];
-  const re = english
-    ? /-?\d{1,3}(?:,\d{3})+\.\d{2}-?|-?\d+\.\d{2}-?/g
-    : /-?\d{1,3}(?:\.\d{3})+,\d{2}-?|-?\d+,\d{2}-?/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(line)) !== null) {
-    const start = m.index, end = start + m[0].length;
-    const before = start > 0 ? line.charAt(start - 1) : " ";
-    const after = end < line.length ? line.charAt(end) : " ";
-    const after2 = end + 1 < line.length ? line.charAt(end + 1) : " ";
-    if (/[\d.,]/.test(before) || /\d/.test(after)) continue;
-    // garbled number "3.4S4,00" / "1.2O0,00": do not read the tail as an amount
-    if (/[A-Za-z]/.test(before) && start > 1 && /[\d.,]/.test(line.charAt(start - 2))) continue;
-    if ((after === "." || after === ",") && /\d/.test(after2)) continue; // date tail "05.10.2026", "3.454.00"
-    const unit = line.substring(end, end + 12);
-    // 24,80 kg / 500,00 ST / 2,00 % / 8,00 h; "to" before a word is the preposition ("EUR 3,120.00 to your account": any
-    // word in English documents, an account word in all), not tonnes ("24.50 to", "24,50 to Stahl")
-    const prep = /^\s?to\s+(?:your|the|our|their|you|us|account|acct|iban|bank|beneficiary|supplier|vendor)\b/i.test(line.substring(end, end + 30)) || (english && /^\s?to [a-z]/.test(unit));
-    if ((UNIT_AFTER.test(unit) && !prep) || UNIT_AFTER_H.test(unit)) continue;
-    let value = english ? parseEnglishAmount(m[0]) : parseGermanAmount(m[0]);
-    if (isNaN(value) || !isFinite(value)) continue;
-    if (value > 0 && before === "(" && after === ")") value = -value;     // accounting "(120,00)"
-    else if (value > 0 && /^ -(?:\s{2,}|\s*$)/.test(line.substring(end, end + 4))) value = -value; // "120,00 -"
-    out.push({ text: m[0].replace(/\s/g, ""), value: value, index: start, end: end });
+  for (let pass = 0; pass < 2; pass++) {
+    const re = pass === 0
+      ? (english ? /-?\d{1,3}(?:,\d{3})+\.\d{2}-?|-?\d+\.\d{2}-?/g : /-?\d{1,3}(?:\.\d{3})+,\d{2}-?|-?\d+,\d{2}-?/g)
+      : (english ? /-?\d{1,3}(?:\.\d{3})+,\d{2}-?|-?\d{1,3}(?:\.\d{3})+\.\d{2}-?|-?\d{3,},\d{2}-?/g : /-?\d{1,3}(?:,\d{3})+\.\d{2}-?|-?\d{1,3}(?:\.\d{3})+\.\d{2}-?|-?\d{3,}\.\d{2}-?/g);
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(line)) !== null) {
+      const start = m.index, end = start + m[0].length;
+      if (pass === 1) {
+        let overlap = false;
+        for (let q = 0; q < out.length; q++) if (start < out[q].end && end > out[q].index) overlap = true;
+        if (overlap) continue;
+        if (/^-?\d+[.,]\d{2}-?$/.test(m[0]) && !/EUR|€|USD|\$|GBP|£|CHF/.test(line.substring(Math.max(0, start - 6), start) + " " + line.substring(end, end + 6))) continue;
+      }
+      const before = start > 0 ? line.charAt(start - 1) : " ";
+      const after = end < line.length ? line.charAt(end) : " ";
+      const after2 = end + 1 < line.length ? line.charAt(end + 1) : " ";
+      if (/[\d.,]/.test(before) || /\d/.test(after)) continue;
+      // garbled number "3.4S4,00" / "1.2O0,00": do not read the tail as an amount
+      if (/[A-Za-z]/.test(before) && start > 1 && /[\d.,]/.test(line.charAt(start - 2))) continue;
+      if ((after === "." || after === ",") && /\d/.test(after2)) continue; // date tail "05.10.2026", "3.454.00"
+      const unit = line.substring(end, end + 12);
+      // 24,80 kg / 500,00 ST / 2,00 % / 8,00 h; "to" before a word is the preposition ("EUR 3,120.00 to your account": any
+      // word in English documents, an account word in all), not tonnes ("24.50 to", "24,50 to Stahl")
+      const prep = /^\s?to\s+(?:your|the|our|their|you|us|account|acct|iban|bank|beneficiary|supplier|vendor)\b/i.test(line.substring(end, end + 30)) || (english && /^\s?to [a-z]/.test(unit));
+      if ((UNIT_AFTER.test(unit) && !prep) || UNIT_AFTER_H.test(unit)) continue;
+      if (CAPITAL_BEFORE.test(line.substring(Math.max(0, start - 50), start))) continue;
+      const dotDot = /^-?\d{1,3}(?:\.\d{3})+\.\d{2}-?$/.test(m[0]);
+      const eng = pass === 0 ? english : !english;
+      let value = dotDot ? parseEnglishAmount(m[0].replace(/\.(?=\d{3}\.)/g, "")) : eng ? parseEnglishAmount(m[0]) : parseGermanAmount(m[0]);
+      if (isNaN(value) || !isFinite(value)) continue;
+      if (value > 0 && before === "(" && after === ")") value = -value;     // accounting "(120,00)"
+      else if (value > 0 && /^ -(?:\s{2,}|\s*$)/.test(line.substring(end, end + 4))) value = -value; // "120,00 -"
+      out.push({ text: m[0].replace(/\s/g, ""), value: value, index: start, end: end });
+    }
   }
+  out.sort((a, b) => a.index - b.index);
   return out;
 }
 
@@ -6397,11 +6421,15 @@ function segmentLabel(seg: string, extra: RegExp | null, afterAmount: boolean): 
   // "Sondervorauszahlung" / "Vorauszahlung" is an advance payment, not an "Auszahlung" (payout)
   let s = /vorauszahlung/i.test(seg) ? seg.replace(/vorauszahlung/gi, "vorzahlung") : seg;
   if (afterAmount) {
-    // "3.454,00 EUR überwiesen (Skonto 70,49 EUR)": the verb belongs to the previous amount
+    // "3.454,00 EUR überwiesen (Skonto 70,49 EUR)": the verb belongs to the previous amount; not when it names a part
+    // payment before the gross amount it is computed from ("überweisen wir die vereinbarte Anzahlung von 30 % des
+    // Bruttobetrags: 16.993,20")
     const pm = PAYMENT_KEYWORDS.exec(s);
     if (pm) {
       const rest = s.substring(pm.index + pm[0].length);
-      if (NEGATIVE_KEYWORDS.test(rest)) s = rest;
+      const ng = NEGATIVE_KEYWORDS.exec(rest);
+      const part = PART_PAYMENT.exec(rest);
+      if (ng !== null && !(part !== null && part.index < ng.index && !DEDUCTION_KEYWORDS.test(rest))) s = rest;
     }
   }
   const lab: LabelInfo = { strong: STRONG_KEYWORDS.test(s), payment: PAYMENT_KEYWORDS.test(s), weak: WEAK_KEYWORDS.test(s), neg: NEGATIVE_KEYWORDS.test(s), ded: DEDUCTION_KEYWORDS.test(s) };
@@ -6852,6 +6880,7 @@ function integerCurrencyAmount(s: string): boolean {
     // dates, years and numbered references are no amounts ("vom 29.10.2026 EUR", "2026 EUR", "Nr. 4711 EUR")
     if (/\d[.\/-]\d{1,2}[.\/-]\d/.test(num) || /^(?:19|20)\d\d$/.test(num)) continue;
     if (m[1] && NUMBER_LABEL_BEFORE.test(s.substring(Math.max(0, m.index - 14), m.index))) continue;
+    if (CAPITAL_BEFORE.test(s.substring(Math.max(0, m.index - 50), m.index))) continue;
     // exchange rates ("Kurs 1 EUR = 1,0700 USD", "1 USD = 0,9346 EUR") are no amounts
     if (/^\s*=/.test(s.substring(m.index + m[0].length)) || /=\s*$/.test(s.substring(Math.max(0, m.index - 3), m.index)) || /[.,]\d{4,}$/.test(num)) continue;
     return true;
@@ -7521,6 +7550,11 @@ function pickAmount(lines: string[], extraKeywords: string): AmountPick {
         let post = post0;
         const pe = sentenceEnd(post, 0);
         if (pe >= 0) post = post.substring(0, pe);
+        // only in the same cell ("12,878.40   Paid" is a status column, "41,200.00 | Paid year to date" another field); a
+        // sentence of the payer may have wide gaps from a converted mail ("wir haben heute 3.454,00 EUR   überwiesen")
+        const cg = post.search(FIRST_PERSON.test(pre) ? /\s[|\u00a6]\s/ : /\s{3,}|\s[|\u00a6]\s/);
+        if (cg >= 0) post = post.substring(0, cg);
+        if (OPEN_ITEMS.test(pre)) post = "";
         const pi = post.search(POST_PAYMENT);
         const ni = post.search(NEGATIVE_KEYWORDS);
         if (pi >= 0 && (ni < 0 || pi < ni) && !NOT_YET.test(post)) { lab.payment = true; lab.strong = true; }
@@ -7552,6 +7586,20 @@ function pickAmount(lines: string[], extraKeywords: string): AmountPick {
     // only a sentence that wraps: words before the amount and a lower-case continuation on the next line
     if (!/^[a-zäöüß]/.test(nx.text) || (inf.text.substring(0, inf.amounts[k - 1].index).match(/[A-Za-zÄÖÜäöüß]{2,}/g) || []).length < 3) continue;
     if (lead.length <= 40 && POST_PAYMENT.test(lead) && !NEGATIVE_KEYWORDS.test(lead)) { lab.payment = true; lab.strong = true; lab.neg = false; lab.ded = false; }
+  }
+  // a payer's sentence that ends the line with a colon, the amount opens the next line ("... überweisen wir die vereinbarte
+  // Anzahlung von 30 % des Bruttobetrags:" / "16.993,20 EUR, Valuta 03.11.2026"): the sentence labels that amount
+  for (let i = 0; i + 1 < infos.length; i++) {
+    const inf = infos[i], nx = infos[i + 1];
+    const k = inf.amounts.length;
+    if (k === 0 || nx.amounts.length === 0 || nx.labels[0].payment || nx.quoted || inf.quoted) continue;
+    if (hasWords(nx.text.substring(0, nx.amounts[0].index))) continue;
+    const tail = inf.text.substring(inf.amounts[k - 1].end);
+    if (!/:\s*$/.test(tail) || (tail.match(/[A-Za-zÄÖÜäöüß]{2,}/g) || []).length < 4) continue;
+    const lab = segmentLabel(tail, extra, true);
+    if (!lab.payment || lab.ded) continue;
+    const l = nx.labels[0];
+    l.payment = true; l.strong = lab.strong; l.weak = true; l.neg = false; l.ded = false;
   }
   mapTableColumns(infos);
   // table headers written with single spaces ("Rechnung   Datum Betrag Skonto Zahlbetrag")
@@ -8432,7 +8480,7 @@ const BONUS_CREDIT = /kundenkonto|kundenkarte|punkte|bonus|treue|gutschein|zinse
 const PAYER_SWISS = /(?:wir haben|haben wir)[^.!?]{0,120}\b(?:vergütet|verguetet)\b|(?:wir haben|haben wir)[^.!?]{0,80}\bkonto\b[^.!?]{0,80}\berkannt\b/i;
 // a payment with its value date ("mit Valuta 30.10. erhalten Sie"), a SWIFT MT103 copy (":32A:" value date, currency,
 // amount): payment wording
-const VALUE_DATE_PAY = /\bmit (?:valuta|wertstellung)\b|(?:^|\n)\s*:32A:\s*\d{6}[A-Z]{3}\d/i;
+const VALUE_DATE_PAY = /\bmit (?:valuta|wertstellung)\b|(?:^|\n)\s*:32A:\s*\d{6}\s*[A-Z]{3}\s*\d/i;
 // features of an invoice, receipt or service report beside a bare payment label ("Zahlbetrag" also ends invoices):
 // item header cells, a VAT line with an amount, the small-business VAT note, receipt words
 const ITEM_HEAD_CELL = /^(?:pos\.?|position|pos\.?-?nr\.?|menge|anzahl|einzelpreis|e-?preis|stückpreis|stueckpreis|einheit|me|artikel|artikel-?nr\.?|leistung|tätigkeit|taetigkeit|std\.?|stunden|qty|quantity|unit price|description)$/i;
@@ -8705,6 +8753,10 @@ const MAX_DOCS = 30;             // PDFs and other attachments read per mail (th
 const ADVICE_FILE_NAME = /zahlungsavis|überweisungsavis|ueberweisungsavis|payment.?advice|remittance|(?:^|[^a-zäöüß])avis(?:[^a-zäöüß]|$)/i;
 // a subject the flow already extended (" - 2.601,35 EUR", " - 2.601,35 EUR (prüfen)", " - 2.601,35 EUR ?")
 const BOT_SUFFIX = / - -?\d{1,3}(?:\.\d{3})*,\d{2} [A-Z]{3}(?: \(prüfen\)| \?)?\s*$/;
+// stands for a mail without a subject in the subject fields
+const NO_SUBJECT = "(Kein Betreff)";
+// the amount in front of a subject (also after reply and forward prefixes "AW: 2.601,35 EUR - Zahlungsavis"): the flow ran before
+const BOT_PREFIX = /^\s*(?:(?:aw|re|wg|fw|fwd|antw|tr|wtr|sv|vs)\s*:\s*)*-?\d{1,3}(?:\.\d{3})*,\d{2} [A-Z]{3}(?: \(prüfen\)| \?)?(?: - |\s*$)/i;
 // the mail text refers to an attachment ("anbei", "im Anhang", "attached")
 const ATTACH_REF = /\banbei\b|im anhang|in der anlage|als anlage|beigefügt|beiliegend|anhängend|\bangehängt|\bangehaengt|siehe anhang|siehe anlage|\battached\b|\benclosed\b|see attachment|please find/i;
 // the mail text names a payment beside the attached advice ("Zusätzlich haben wir heute 940,57 EUR separat überwiesen")
@@ -8752,6 +8804,8 @@ const NEUTRAL_OTHER = /^(?:no amount, no payment wording|amount without payment 
 const MAX_AMOUNT = 1e12;
 // an HTML file saved by Excel ("Web page" / "Single file web page")
 const EXCEL_HTML = /urn:schemas-microsoft-com:office:excel|<meta[^>]{0,500}content=["']?Excel\.Sheet/i;
+// a password field: an attached HTML file with it is a sign-in page (phishing bait), never an advice
+const LOGIN_FIELD = /<input\b[^>]{0,400}\btype\s*=\s*["']?password\b/i;
 
 // Result of the extraction step. encrypted: the PDF cannot be decrypted (cryptError says why);
 // incomplete: reasons why the text may be partial; ocr: an OCR text layer makes up most of the text;
@@ -8825,7 +8879,7 @@ function extractPdf(bytes: Uint8Array): ExtractInfo {
 
 function emptyResult(): AvisResult {
   return { ok: false, amount: "", amountNumber: 0, currency: "", line: "", method: "none", confidence: "low", candidates: [], pages: 0, text: "", textLength: 0, warnings: "", error: "",
-    verdict: "other", verdictWhy: "", category: "", subjectSuffix: "", newSubject: "", patchCategory: "", patchSubject: "", documents: [] };
+    verdict: "other", verdictWhy: "", category: "", subjectPrefix: "", newSubject: "", patchCategory: "", patchSubject: "", documents: [] };
 }
 
 // one analysed PDF: the result, the score of the chosen amount (-1 = none), the evidence of pickAmount (null when no text
@@ -9174,6 +9228,7 @@ function attachmentDocuments(att: MailAtt, kw: string, hintCtx: boolean): DocRes
   const textual = !zip && !cfb && looksText(b);
   const str = textual ? decodeText(b, att.charset) : "";
   const html = textual && (att.ctype === "text/html" || /\.html?$/.test(lname) || looksHtml(str));
+  if (html && LOGIN_FIELD.test(str)) return [unreadableDocument(name, "html-login", "HTML file with a sign-in form - possible phishing")];
   // an HTML file is read as a document (letter text and tables); a spreadsheet export disguised as .xls / .mht, or
   // saved by Excel under any name (also a file passed without a name), is a table
   const excelHtml = html && sheetLines > 0 && EXCEL_HTML.test(str.substring(0, 65536));
@@ -9298,6 +9353,16 @@ function decideMail(docs: DocResult[], hint: string, noDocError: string): AvisRe
   // payer statement still is)
   let against: DocResult | null = null;
   for (const d of docs) if (d.body && d.name === "body" && d.against !== "") against = d;
+  // an attached sign-in page is phishing bait: no document of the mail counts as an advice, whatever it says
+  let login: DocResult | null = null;
+  for (const d of docs) if (d.type === "html-login" && login === null) login = d;
+  if (login !== null) {
+    for (const d of docs) {
+      if (d === login || (d.verdict !== "advice" && d.verdict !== "several")) continue;
+      d.verdict = "unclear";
+      d.why = d.why + ", but " + login.name + " is a sign-in page (possible phishing)";
+    }
+  }
   if (against !== null) {
     for (const d of docs) {
       if (d.body || d.strong || (d.verdict !== "advice" && d.verdict !== "several")) continue;
@@ -9386,6 +9451,18 @@ function decideMail(docs: DocResult[], hint: string, noDocError: string): AvisRe
     res = best.res;
     res.verdict = "advice";
     res.verdictWhy = best.why + " in " + best.name;
+    // a total computed from the payment column of a table without a total row (CSV export, a formula without a saved
+    // value) is confirmed when the mail text states the same amount ("Total paid EUR 16,501.15")
+    if (res.confidence === "low" && !best.body && /^uncertain: total computed from \d+ rows of column '[^']*'$/.test(res.error)) {
+      for (const d of docs) {
+        if (!d.body || !d.res.ok || d.res.confidence === "low" || Math.abs(d.res.amountNumber - res.amountNumber) >= 0.005) continue;
+        if ((d.res.currency || "EUR") !== (res.currency || "EUR")) continue;
+        res.confidence = "high";
+        res.error = "";
+        res.verdictWhy = best.why + " in " + best.name + ", the mail text states the same amount";
+        break;
+      }
+    }
     // another attachment (no advice, no other document type) with a different trusted amount: which one is the payment
     // is not clear
     for (const d of docs) {
@@ -9426,7 +9503,7 @@ function decideMail(docs: DocResult[], hint: string, noDocError: string): AvisRe
       res.error = "uncertain: the mail text names another payment amount (" + conflict.res.amount + " " + (conflict.res.currency || "EUR") + ") than the attached advice" + (prev !== "" ? "; " + prev : "");
     }
   } else {
-    let unclear: DocResult | null = null;
+    let unclear: DocResult | null = login;
     for (const d of docs) if (d.verdict === "unclear" && unclear === null) unclear = d;
     let best: DocResult | null = null;
     for (const d of docs) if (best === null || resultRank(d.res, d.score) > resultRank(best.res, best.score)) best = d;
@@ -9684,32 +9761,33 @@ function documentResult(bytes: Uint8Array, raw: string, kw: string, subject: str
 }
 
 function subjectFields(res: AvisResult, subject: string, keywords: string): void {
-  // category, subject suffix and the JSON bodies of the two HTTP requests (PATCH categories, PATCH subject)
+  // category, subject prefix and the JSON bodies of the two HTTP requests (PATCH categories, PATCH subject)
   let cat = "";
-  let suffix = "";
+  let tag = "";
   if (res.ok && !(isFinite(res.amountNumber) && Math.abs(res.amountNumber) < MAX_AMOUNT)) {
     // an amount out of range never goes into a subject
     dropAmount(res);
     if (res.verdict === "advice") { res.verdict = "unclear"; res.verdictWhy = res.error; }
   }
   if (res.verdict === "advice" && res.ok) {
-    const amt = " - " + germanAmount(res.amountNumber) + " " + (res.currency !== "" ? res.currency : "EUR");
-    if (res.confidence === "high") { cat = "Avise"; suffix = amt; }
-    else if (res.confidence === "medium") { cat = "Avise"; suffix = amt + " (prüfen)"; }
-    else { cat = "Avis prüfen"; suffix = amt + " ?"; }
+    const amt = germanAmount(res.amountNumber) + " " + (res.currency !== "" ? res.currency : "EUR");
+    if (res.confidence === "high") { cat = "Avise"; tag = amt; }
+    else if (res.confidence === "medium") { cat = "Avise"; tag = amt + " (prüfen)"; }
+    else { cat = "Avis prüfen"; tag = amt + " ?"; }
   } else if (res.verdict === "advice") {
     res.verdict = "unclear";
     cat = "Avis prüfen";
   } else if (res.verdict === "several") cat = "mehrere Avise";
   else if (res.verdict === "unclear") cat = "Avis prüfen";
   res.category = cat;
-  res.subjectSuffix = suffix;
+  res.subjectPrefix = tag !== "" ? tag + " - " : "";
   res.newSubject = "";
   res.patchSubject = "";
-  const subj = trimEnd(subject);
-  // a subject that already ends with our suffix stays as it is (the flow ran before)
-  if (suffix !== "" && subj.trim() !== "" && !BOT_SUFFIX.test(subj)) {
-    res.newSubject = subj + suffix;
+  const subj = subject.trim();
+  // the amount goes in front of the subject; a subject that already carries an amount (in front, or behind as written by
+  // earlier versions) stays as it is (the flow ran before); a mail without a subject gets the amount alone
+  if (tag !== "" && subj !== "" && !BOT_PREFIX.test(subj) && !BOT_SUFFIX.test(subj)) {
+    res.newSubject = subj === NO_SUBJECT ? tag : tag + " - " + subj;
     res.patchSubject = JSON.stringify({ subject: res.newSubject });
   }
   res.patchCategory = "";
@@ -9775,8 +9853,8 @@ function main(workbook: ExcelScript.Workbook, pdfBase64: string, extraKeywords?:
           if (/[\ufffd\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/.test(subject)) patchable = false;
         }
         keywords = mail.msgs[0].keywords;
-        // a mail without a subject: Outlook lists it as "(Kein Betreff)", the amount goes behind that text
-        const writeBack = !patchable ? "" : subject.trim() !== "" ? subject : mail.msgs[0].seen ? "(Kein Betreff)" : "";
+        // a mail without a subject (Outlook lists it as "(Kein Betreff)") gets the amount alone as its subject
+        const writeBack = !patchable ? "" : subject.trim() !== "" ? subject : mail.msgs[0].seen ? NO_SUBJECT : "";
         return finishResult(inputNote(mailResult(mail, kw, subject), inp), writeBack, keywords);
       }
       totalDecoded = 0;

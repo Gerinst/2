@@ -463,18 +463,18 @@ mark.mbm { background: var(--chg-bg); color: inherit; border-radius: 3px; paddin
   <div class="dh"><b>Infos zum Flow „Avis V2“</b><button type="button" class="picon" id="dClose" aria-label="Schließen"><svg viewBox="0 0 16 16"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></button></div>
   <div class="db">
     <details open><summary>Was an der Mail passiert</summary><div class="dc">
-      <p>Jede neue Mail im Posteingang des freigegebenen Postfachs geht als Ganzes an das Skript (PDF, Excel/CSV, SAP-Export und Mailtext). Ist es ein Zahlungsavis, bekommt die <b>Original-Mail</b> eine Kategorie und den Betrag hinten an den Betreff. Andere Mails bleiben unberührt; es kommen keine zusätzlichen Mails.</p>
+      <p>Jede neue Mail im Posteingang des freigegebenen Postfachs geht als Ganzes an das Skript (PDF, Excel/CSV, SAP-Export und Mailtext). Ist es ein Zahlungsavis, bekommt die <b>Original-Mail</b> eine Kategorie und den Betrag vorne in den Betreff. Andere Mails bleiben unberührt; es kommen keine zusätzlichen Mails.</p>
       <div class="tblwrap"><table class="tbl">
         <tr><th>Ergebnis des Skripts</th><th>Kategorie</th><th>Betreff danach</th></tr>
-        <tr><td>Ein Avis, Betrag sicher</td><td><span class="cat g">Avise</span></td><td><code>Zahlungsavis - 2.601,35 EUR</code></td></tr>
-        <tr><td>Ein Avis, Betrag ziemlich sicher</td><td><span class="cat g">Avise</span></td><td><code>Zahlungsavis - 2.601,35 EUR (prüfen)</code></td></tr>
-        <tr><td>Ein Avis, Betrag unsicher</td><td><span class="cat o">Avis prüfen</span></td><td><code>Zahlungsavis - 2.601,35 EUR ?</code></td></tr>
+        <tr><td>Ein Avis, Betrag sicher</td><td><span class="cat g">Avise</span></td><td><code>2.601,35 EUR - Zahlungsavis</code></td></tr>
+        <tr><td>Ein Avis, Betrag ziemlich sicher</td><td><span class="cat g">Avise</span></td><td><code>2.601,35 EUR (prüfen) - Zahlungsavis</code></td></tr>
+        <tr><td>Ein Avis, Betrag unsicher</td><td><span class="cat o">Avis prüfen</span></td><td><code>2.601,35 EUR ? - Zahlungsavis</code></td></tr>
         <tr><td>Mehrere Avise in einer Mail</td><td><span class="cat p">mehrere Avise</span></td><td>unverändert</td></tr>
         <tr><td>Unklar: Avis-Hinweis, aber nicht lesbar (Scan, verschlüsselt, altes .xls) oder nicht sicher erkennbar</td><td><span class="cat o">Avis prüfen</span></td><td>unverändert</td></tr>
         <tr><td>Skript-Fehler oder Zeitüberschreitung</td><td><span class="cat o">Avis prüfen</span></td><td>unverändert</td></tr>
         <tr><td>Kein Avis (Rechnung, Reklamation, Bestellung, Info, Mahnung …)</td><td><span class="cat n">keine</span></td><td>unverändert</td></tr>
       </table></div>
-      <p>„Zahlungsavis“ steht für den Betreff, den der Absender geschrieben hat; er bleibt vorne stehen. Der Betrag steht immer im deutschen Format mit Währung.</p>
+      <p>„Zahlungsavis“ steht für den Betreff, den der Absender geschrieben hat; er bleibt vollständig erhalten. Der Betrag steht immer davor, im deutschen Format mit Währung und „ - “ als Trenner. Eine Mail ohne Betreff bekommt nur den Betrag.</p>
     </div></details>
     <details><summary>Welches Postfach? (Feld „Avis-Postfach“ oben rechts)</summary><div class="dc" id="mbDrawer"></div></details>
     <details><summary>Designer-Tipps (vor dem Bauen lesen)</summary><div class="dc"><ul>
@@ -496,7 +496,7 @@ mark.mbm { background: var(--chg-bg); color: inherit; border-radius: 3px; paddin
       <ol>
         <li>Testflow <code>PATCHTEST</code>: Trigger „Wenn eine neue E-Mail in einem freigegebenen Postfach eingeht (V2)“, Postfach <code class="mbv">avis@firma.de</code>, Erweiterte Parameter → <b>Filter für Betreff</b> = <code>PATCHTEST</code>.</li>
         <li>Aktion <b>HTTP-Anforderung senden</b> (Office 365 Outlook): URI über <span class="kbd">fx</span> <button type="button" class="cp" data-copy-tpl="concat('https://graph.microsoft.com/v1.0/users/{{MB}}/messages/', triggerOutputs()?['body/id'])">URI-Formel kopieren</button>, Methode <b>PATCH</b>, Text <code>{"categories":["Avise"]}</code>.</li>
-        <li>Zweite gleiche Aktion mit Text <code>{"subject":"PATCHTEST Zahlungsavis - 2.601,35 EUR"}</code>.</li>
+        <li>Zweite gleiche Aktion mit Text <code>{"subject":"2.601,35 EUR - PATCHTEST Zahlungsavis"}</code>.</li>
         <li>Mail mit Betreff „PATCHTEST Zahlungsavis“ an das Postfach schicken, 1 bis 5 Minuten warten. Richtig: neuer Betreff und Kategorie in Outlook, beide Aktionen grün. 403 = kein Vollzugriff oder falsches Konto; 404 = URI oder Adresse falsch.</li>
         <li>Danach den Testflow deaktivieren.</li>
       </ol></div></details>
@@ -505,16 +505,16 @@ mark.mbm { background: var(--chg-bg); color: inherit; border-radius: 3px; paddin
       <p>Microsoft-365-Testzugang mit freigegebenem Postfach, genau dieser Flow und dieses Skript, nur erfundene Test-Mails. Lasttest: 40 Mails in unter 2 Minuten (15 Avise, 25 Fallen). Jede Mail löste einen Lauf aus, 20 sogar zwei (ohne Folgen: der Betrag steht nie doppelt im Betreff). 37 Ergebnisse genau wie erwartet, 3 vertretbar, keine Falle mit „Avise“, kein Avis verloren. Dazu zwei Mails mit 20 PDF-Anlagen. Dauer meist 8 bis 20 Sekunden je Mail.</p>
       <div class="tblwrap"><table class="tbl">
         <tr><th>Test-Mail</th><th>Kategorie</th><th>Betreff danach</th></tr>
-        <tr><td>Avis mit 72 Seiten (SAP-Liste, Übertrag auf jeder Seite)</td><td><span class="cat g">Avise</span></td><td>… - 2.710.880,94 EUR</td></tr>
-        <tr><td>Avis mit 27 Seiten, Zwischensumme je Filiale, Dateiname „Dokument_…“</td><td><span class="cat g">Avise</span></td><td>… - 826.636,07 EUR</td></tr>
-        <tr><td>Gutschriftsanzeige der Bank mit Kontostand vorher und nachher</td><td><span class="cat g">Avise</span></td><td>… - 27.851,73 EUR</td></tr>
-        <tr><td>Englisches Remittance Advice, französisches Avis de paiement, Schweizer Avis in CHF</td><td><span class="cat g">Avise</span></td><td>… - 145.118,91 EUR, … - 48.601,59 EUR, … - 42.761,38 CHF</td></tr>
+        <tr><td>Avis mit 72 Seiten (SAP-Liste, Übertrag auf jeder Seite)</td><td><span class="cat g">Avise</span></td><td>2.710.880,94 EUR - …</td></tr>
+        <tr><td>Avis mit 27 Seiten, Zwischensumme je Filiale, Dateiname „Dokument_…“</td><td><span class="cat g">Avise</span></td><td>826.636,07 EUR - …</td></tr>
+        <tr><td>Gutschriftsanzeige der Bank mit Kontostand vorher und nachher</td><td><span class="cat g">Avise</span></td><td>27.851,73 EUR - …</td></tr>
+        <tr><td>Englisches Remittance Advice, französisches Avis de paiement, Schweizer Avis in CHF</td><td><span class="cat g">Avise</span></td><td>145.118,91 EUR - …, 48.601,59 EUR - …, 42.761,38 CHF - …</td></tr>
         <tr><td>Avis mit Skonto, Abzug und Gutschrift; Excel-Avis; Avis mit drei Rechnungskopien; Weiterleitung mit angehängter Mail</td><td><span class="cat g">Avise</span></td><td>Betrag des Avis</td></tr>
-        <tr><td>Avis nur im Mailtext (Tabelle)</td><td><span class="cat g">Avise</span></td><td>… - 12.186,83 EUR (prüfen)</td></tr>
-        <tr><td>Mailtext nennt einen anderen Betrag als das Avis (Zahlendreher)</td><td><span class="cat o">Avis prüfen</span></td><td>… - 27.732,85 EUR ?</td></tr>
+        <tr><td>Avis nur im Mailtext (Tabelle)</td><td><span class="cat g">Avise</span></td><td>12.186,83 EUR (prüfen) - …</td></tr>
+        <tr><td>Mailtext nennt einen anderen Betrag als das Avis (Zahlendreher)</td><td><span class="cat o">Avis prüfen</span></td><td>27.732,85 EUR ? - …</td></tr>
         <tr><td>Mailtext nennt eine zusätzliche Zahlung; zwei Avise in einer Mail</td><td><span class="cat p">mehrere Avise</span></td><td>unverändert</td></tr>
         <tr><td>Eingescanntes Avis ohne Text</td><td><span class="cat o">Avis prüfen</span></td><td>unverändert</td></tr>
-        <tr><td>Avis als 20. Anlage zwischen 19 Rechnungen, neutraler Dateiname</td><td><span class="cat g">Avise</span></td><td>… - 6.796,17 EUR</td></tr>
+        <tr><td>Avis als 20. Anlage zwischen 19 Rechnungen, neutraler Dateiname</td><td><span class="cat g">Avise</span></td><td>6.796,17 EUR - …</td></tr>
         <tr><td>20 Rechnungen in einer Mail, kein Avis</td><td><span class="cat n">keine</span></td><td>unverändert</td></tr>
         <tr><td>23 Fallen: Rechnungen (auch mit „Zahlbetrag bei Skonto“ und „bitte Zahlungsavis senden“), Gutschrift, Abschlags-, Proforma- und Stornorechnung, Mahnung, Zahlungserinnerung, Kontoauszug, Saldenbestätigung, Lastschrift-Ankündigung, Shop-Zahlungsbestätigung, neue Bankverbindung, Preisanpassung, Lieferavis, Speditionsavis, Bestellung, Reklamation mit Einbehalt, Antwort auf ein Avis</td><td><span class="cat n">keine</span></td><td>unverändert</td></tr>
         <tr><td>Quittung über eine Barzahlung, englische Rechnung mit „Remittance information“</td><td><span class="cat o">Avis prüfen</span></td><td>unverändert (vertretbar)</td></tr>
@@ -524,7 +524,7 @@ mark.mbm { background: var(--chg-bg); color: inherit; border-radius: 3px; paddin
       <tr><td><code>verdict</code></td><td><code>advice</code> (ein Avis), <code>several</code> (mehrere), <code>unclear</code>, <code>other</code> (kein Avis)</td></tr>
       <tr><td><code>verdictWhy</code></td><td>Kurzer Grund auf Englisch, z. B. <code>advice title 'Zahlungsavis' in Zahlung_4711.pdf</code></td></tr>
       <tr><td><code>category</code></td><td><code>Avise</code>, <code>Avis prüfen</code>, <code>mehrere Avise</code> oder leer</td></tr>
-      <tr><td><code>subjectSuffix</code> / <code>newSubject</code></td><td>Anhang an den Betreff / der fertige neue Betreff (leer = keine Änderung)</td></tr>
+      <tr><td><code>subjectPrefix</code> / <code>newSubject</code></td><td>Betrag vor dem Betreff (z. B. <code>2.601,35 EUR - </code>) / der fertige neue Betreff (leer = keine Änderung)</td></tr>
       <tr><td><code>patchCategory</code> / <code>patchSubject</code></td><td>Fertiger Text für Kategorie setzen und Betreff setzen (leer = nichts tun)</td></tr>
       <tr><td><code>documents</code></td><td>Je geprüftem Dokument eine Zeile: Name, Art, Urteil, Betrag, Sicherheit</td></tr>
       <tr><td><code>amount</code>, <code>currency</code>, <code>confidence</code>, <code>line</code>, <code>candidates</code>, <code>text</code>, <code>warnings</code>, <code>error</code></td><td>Zur Fehlersuche im Ausführungsverlauf (Gründe auf Deutsch: Anleitung, Anhang B)</td></tr>
@@ -636,7 +636,7 @@ mark.mbm { background: var(--chg-bg); color: inherit; border-radius: 3px; paddin
     subject: "triggerOutputs()?['body/subject']",
     msgId: "triggerOutputs()?['body/id']",
     eigen: "equals(toLower(coalesce(triggerOutputs()?['body/from'], '')), '{{mb}}')",
-    katKopie: "if(endsWith(coalesce(triggerOutputs()?['body/subject'], ''), ' ?'), '{\"categories\":[\"Avis prüfen\"]}', '{\"categories\":[\"Avise\"]}')",
+    katKopie: "if(endsWith(first(split(coalesce(triggerOutputs()?['body/subject'], ''), ' - ')), ' ?'), '{\"categories\":[\"Avis prüfen\"]}', '{\"categories\":[\"Avise\"]}')",
     uriFwd: "concat('https://graph.microsoft.com/v1.0/users/{{MB}}/messages/', triggerOutputs()?['body/id'], '/createForward')",
     fwdBody: '{"toRecipients":[{"emailAddress":{"address":"{{MB}}"}}]}',
     uriCopy: "concat('https://graph.microsoft.com/v1.0/users/{{MB}}/messages/', body('Kopie_anlegen')?['id'])",
@@ -824,7 +824,7 @@ mark.mbm { background: var(--chg-bg); color: inherit; border-radius: 3px; paddin
       summary: { chg: false, html: 'Nichts ändern.' },
       settings: ACTION_SETTINGS,
       code: CODE.Betreff_setzen,
-      info: '<p>Hängt den Betrag an den Betreff der Original-Mail, z. B. <code>Zahlungsavis - 2.601,35 EUR</code>.</p><div class="callout warn"><b>Ab 31.12.2026</b> will Microsoft Betreffänderungen an empfangenen Mails sperren. Dann schlägt nur diese Aktion fehl; die Kategorie ist schon gesetzt. Im Januar testen; falls gesperrt: Plan B (oben umschalten).</div>'
+      info: '<p>Setzt den Betrag vor den Betreff der Original-Mail, z. B. <code>2.601,35 EUR - Zahlungsavis</code>.</p><div class="callout warn"><b>Ab 31.12.2026</b> will Microsoft Betreffänderungen an empfangenen Mails sperren. Dann schlägt nur diese Aktion fehl; die Kategorie ist schon gesetzt. Im Januar testen; falls gesperrt: Plan B (oben umschalten).</div>'
     },
     finish: {
       kind: 'finish', conn: 'finish', title: 'Speichern und testen', sub: 'Zum Schluss',
@@ -863,7 +863,7 @@ mark.mbm { background: var(--chg-bg); color: inherit; border-radius: 3px; paddin
       ],
       summary: { chg: false, html: 'Nichts ändern.' },
       settings: ACTION_SETTINGS,
-      info: '<p>Gibt der Kopie die Kategorie: „Avis prüfen“, wenn der Betreff auf „ ?“ endet, sonst „Avise“.</p>'
+      info: '<p>Gibt der Kopie die Kategorie: „Avis prüfen“, wenn der Betrag vorne im Betreff ein „ ?“ trägt (z. B. <code>2.601,35 EUR ? - Zahlungsavis</code>), sonst „Avise“.</p>'
     },
     Kopie_anlegen: {
       kind: 'action', conn: 'outlook', planB: true, title: 'Kopie anlegen', rename: 'Kopie_anlegen', sub: 'Office 365 Outlook · HTTP-Anforderung senden · Plan B',
