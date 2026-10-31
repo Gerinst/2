@@ -958,9 +958,10 @@ function pdfPasswordHash(pw: Uint8Array, salt: Uint8Array, udata: Uint8Array, r6
 // signed / encrypted / rpmsg: what was seen on the way; parts / berBudget: work limits; extraPdfs: PDFs beyond
 // MAIL_MAX_PDFS (counted, not kept); atts: other attachments to read (spreadsheets, text, HTML, office files);
 // texts: body parts; ignored: names / types of parts that are skipped (images, signatures, vCards, calendar items);
+// photos: images attached as a file or large enough to be a photo or screenshot (not a small signature logo);
 // msgs: the outer mail (index 0) and attached mails (message/rfc822, .eml); cur: index of the mail being scanned
 interface MailPdf { name: string; data: Uint8Array }
-interface MailScan { pdfs: MailPdf[]; container: boolean; signed: boolean; encrypted: boolean; rpmsg: boolean; parts: number; berBudget: number; extraPdfs: number; atts: MailAtt[]; extraAtts: number; texts: MailText[]; ignored: string[]; msgs: MailMsg[]; cur: number; dropped: number }
+interface MailScan { pdfs: MailPdf[]; container: boolean; signed: boolean; encrypted: boolean; rpmsg: boolean; parts: number; berBudget: number; extraPdfs: number; atts: MailAtt[]; extraAtts: number; texts: MailText[]; ignored: string[]; photos: number; msgs: MailMsg[]; cur: number; dropped: number }
 // a non-PDF attachment: file name, content type (lower case, no parameters), charset parameter, decoded bytes
 interface MailAtt { name: string; ctype: string; charset: string; data: Uint8Array; msg: number }
 // a body part (text/plain or text/html, not an attachment) of mail msg: charset parameter and the decoded bytes
@@ -1594,6 +1595,8 @@ function scanMimeEntity(s: string, start: number, end: number, depth: number, st
   // images, signatures, vCards, calendar items, winmail.dat: never read (the name may still hint at an advice)
   if (MAIL_IGNORE_TYPE.test(type) || MAIL_IGNORE_NAME.test(lname)) {
     if (st.ignored.length < 200) st.ignored.push(name !== "" ? name : type);
+    // an image attached as a file, or a large inline one (a pasted screenshot), may be a photo of an advice
+    if ((/^image\//.test(type) || /\.(?:jpe?g|jfif|png|gif|bmp|tiff?|heic|heif|webp)$/.test(lname)) && (disp.value === "attachment" || end - b0 > 80000)) st.photos++;
     return;
   }
   const pdfType = type === "application/pdf" || type === "application/x-pdf" || lname.endsWith(".pdf");
@@ -1620,7 +1623,7 @@ function scanMimeEntity(s: string, start: number, end: number, depth: number, st
 function unwrapMail(b: Uint8Array): MailScan {
   // PDFs inside a mail container (smime.p7m / .eml / base64 or PEM CMS); flags for encrypted / protected mail
   const st: MailScan = { pdfs: [], container: false, signed: false, encrypted: false, rpmsg: false, parts: 0, berBudget: 4000000, extraPdfs: 0,
-    atts: [], extraAtts: 0, texts: [], ignored: [], msgs: [{ subject: "", keywords: "", name: "", seen: false, auto: "" }], cur: 0, dropped: 0 };
+    atts: [], extraAtts: 0, texts: [], ignored: [], photos: 0, msgs: [{ subject: "", keywords: "", name: "", seen: false, auto: "" }], cur: 0, dropped: 0 };
   scanMailBytes(b, "", 0, st);
   return st;
 }
@@ -1672,7 +1675,7 @@ interface ShXSheet { name: string; href: string; hidden: boolean }
 
 const SH_GEN: ShFmt = { kind: "gen", dec: 0, cur: "", group: false, time: false, secs: false };
 // column headers: the paid amount; the invoice amount (only with a deduction column); deductions; payment number / date
-const SH_PAY_HDR = /zahl(?:ungs)?betrag|[uü]e?berweisungsbetrag|auszahlungsbetrag|betrag\s*bezahlt|(?:be|ge)zahlte[rn]?\s*betrag|paid\s*amount|payment\s*amount|amount\s*paid|amount\s*remitted|remitted\s*amount/i;
+const SH_PAY_HDR = /zahl(?:ungs)?betrag|[uü]e?berweisungsbetrag|auszahlungsbetrag|betrag\s*bezahlt|(?:be|ge)zahlte[rn]?\s*betrag|[uü]e?berwiesene[rn]?\s*betrag|betrag\s*[uü]e?berwiesen|paid\s*amount|payment\s*amount|amount\s*paid|amount\s*remitted|remitted\s*amount|amount\s*transferred|transferred\s*amount|transfer\s*amount/i;
 const SH_PAY_WEAK = /net\s*(?:amount|payment)|^\s*(?:[uü]e?berwiesen|bezahlt|gezahlt|paid|remitted)(?:\s*(?:eur|€|chf|usd))?\s*$/i;
 const SH_AMT_HDR = /betrag|amount/i;
 const SH_AMT_NOT = /skonto|abzug|abz[uü]e?ge|discount|deduct|steuer|mwst|ust\b|vat\b|tax|rabatt|offen|open|rest|saldo|balance|geb[uü]hr|fee|%|prozent|percent|satz|rate\b|datum|date/i;
@@ -1680,8 +1683,10 @@ const SH_DED_HDR = /skonto|abzug|abz[uü]e?ge|discount|deduction|einbehalt/i;
 const SH_DED_NOT = /%|prozent|percent|satz|rate\b|tage|days|datum|date|frist|basis|f[aä]hig|art$|grund|reason|text|code|schl[uü]ssel|key/i;
 const SH_ID_HDR = /zahl(?:ungs)?(?:nr|nummer|beleg|id)|ausgleichsbeleg|payment\s*(?:no|nr|number|id)\b/i;
 const SH_DATE_HDR = /zahl(?:ungs)?datum|valuta|payment\s*date|value\s*date|ausgleichsdatum/i;
-// a total row: a short cell that starts with a total word, or the SAP total markers "*" / "**"
-const SH_TOTAL = /^(?:\*{1,3}$|(?:summe|gesamt(?:summe|betrag)?|endsumme|zwischensumme|totals?|grand\s*total|sum|insgesamt)\b)/i;
+// a total row: a short cell that starts with a total word, or the SAP total markers "*" / "**"; SH_TOTAL_END: a row label
+// (the first text cell) that ends with one ("Payment Total", "Zahlbetrag gesamt", "Payment total (EUR)")
+const SH_TOTAL = /^(?:\*{1,3}$|(?:summe|gesamt(?:summe|betrag)?|endsumme|zwischensumme|sub-?\s?totals?|totals?|grand\s*total|sum|insgesamt)\b)/i;
+const SH_TOTAL_END = /^(?:[a-zäöüß][a-zäöüß.\/&-]*\s){1,4}(?:gesamt|insgesamt|summe|totals?)(?:\s\(?(?:eur|chf|usd|gbp|€|\$|£)\)?)?\s?:?$/i;
 // headers of columns that hold amounts (integers there are shown with ",00") and labels of an amount in the same row
 const SH_MONEY_HDR = /(?:total|brutto|netto|gross|\bnet|skonto|abzug|abz[uü]e?ge|discount|deduction|zahlung|payment|saldo|balance|wert|value|\bsoll|haben|debit|credit|\beur|\bchf|\busd|\bgbp)\s*(?:in\s+)?(?:\(?\s*(?:eur|chf|usd|gbp|€|\$|£|hw|fw|tw)\s*\)?)?\s*:?$/i;
 const SH_MONEY_NOT = /datum|date|valuta|nr\.?$|nr\b|nummer|number|\bno\.?\b|\bid\b|%|prozent|percent|satz|rate|tage|days|w[aä]hrung|currency|art$|typ|type|method|weg$|status|referenz|reference|text|info|bank|iban|\bkonto|account|anzahl|count|menge|qty|quantity|beleg|avis|advice/i;
@@ -2144,7 +2149,8 @@ function shParseNum(s: string, mode: number): number {
   }
   const ip = dec >= 0 ? t.substring(0, dec) : t;
   const fp = dec >= 0 ? t.substring(dec + 1) : "";
-  if (/[.,]/.test(ip) && !/^\d{1,3}(?:[.,]\d{3})+$/.test(ip)) return NaN;
+  // thousands groups; the Indian lakh / crore grouping ("1,23,456.78") only before a decimal point
+  if (/[.,]/.test(ip) && !/^\d{1,3}(?:[.,]\d{3})+$/.test(ip) && !(t.charAt(dec) === "." && /^\d{1,2}(?:,\d{2})+,\d{3}$/.test(ip))) return NaN;
   if (!/^\d*$/.test(fp)) return NaN;
   const v = parseFloat(ip.replace(/[.,]/g, "") + (fp !== "" ? "." + fp : ""));
   return neg ? -v : v;
@@ -2217,12 +2223,15 @@ function shFindHeader(rows: ShRow[]): ShHead {
 }
 
 function shIsTotalRow(cells: (ShCell | null)[]): boolean {
-  // "Summe", "Gesamt:", "Total EUR", SAP "*" / "**" in any short text cell
+  // "Summe", "Gesamt:", "Total EUR", SAP "*" / "**" in any short text cell; "Payment Total" as the row label
+  let label = true;
   for (let c = 0; c < cells.length; c++) {
     const cell = cells[c];
     if (!cell || cell.isNum) continue;
     const t = shClean(cell.text);
-    if (t !== "" && t.length <= 60 && SH_TOTAL.test(t)) return true;
+    if (t === "") continue;
+    if (t.length <= 60 && (SH_TOTAL.test(t) || (label && SH_TOTAL_END.test(t)))) return true;
+    label = false;
   }
   return false;
 }
@@ -2247,6 +2256,9 @@ function shFinish(g: ShGrid): SheetTable {
     dateCol.push(h.texts[c] !== "" && /datum|\bdate|valuta/i.test(h.texts[c]));
   }
   let sum = 0, count = 0;
+  // blocks of payment rows that a total row closes with their sum ("Total payment 1", "Summe Zahlung 2"); grand: a total
+  // row over more rows than the last block (one payment with subtotals)
+  let blockSum = 0, blockRows = 0, blocks = 0, grand = false;
   let payHeader = "";
   const ids: string[] = [], dates: string[] = [];
   const valCol = h.pay >= 0 ? h.pay : h.ded.length > 0 ? h.amt : -1;
@@ -2264,9 +2276,12 @@ function shFinish(g: ShGrid): SheetTable {
       const cells = rows[r].cells;
       const pc = valCol < cells.length ? cells[valCol] : null;
       if (pc && !pc.isNum && shClean(pc.text) === headPay) continue; // repeated header
-      if (shIsTotalRow(cells)) continue;
+      const total = shIsTotalRow(cells);
       let v = shCellNum(pc, mode);
-      if (isNaN(v)) continue;
+      if (isNaN(v)) {
+        if (total) { blockSum = 0; blockRows = 0; }
+        continue;
+      }
       if (h.pay < 0) {
         let d = 0;
         for (let k = 0; k < h.ded.length; k++) {
@@ -2275,9 +2290,22 @@ function shFinish(g: ShGrid): SheetTable {
         }
         v = v >= 0 ? v - d : v + d;
       }
-      if (count >= 2 && Math.abs(v - sum) < 0.005 && shFilled(cells) <= 2) continue; // total row without a label
+      if (total) {
+        if (blockRows > 0 && v > 0 && Math.abs(v - blockSum) < 0.005) blocks++;
+        if (count > blockRows && Math.abs(v - sum) < 0.005) grand = true;
+        blockSum = 0;
+        blockRows = 0;
+        continue;
+      }
+      if (count >= 2 && Math.abs(v - sum) < 0.005 && shFilled(cells) <= 2) {
+        // total row without a label
+        if (count > blockRows) grand = true;
+        continue;
+      }
       sum += v;
       count++;
+      blockSum += v;
+      blockRows++;
       for (let k = 0; k < 2; k++) {
         const col = k === 0 ? h.id : h.date;
         const c = col >= 0 && col < cells.length ? cells[col] : null;
@@ -2289,7 +2317,10 @@ function shFinish(g: ShGrid): SheetTable {
     }
   }
   const paySum = count > 0 ? Math.round(sum * 100) / 100 : 0;
-  const groups = ids.length > 0 ? ids.length : dates.length > 0 ? dates.length : paySum > 0 ? 1 : 0;
+  let groups = ids.length > 0 ? ids.length : dates.length > 0 ? dates.length : paySum > 0 ? 1 : 0;
+  // without payment number or date columns: two or more blocks, each closed by its own total and no grand total over
+  // them, are one payment each
+  if (blocks >= 2 && !grand && ids.length === 0 && dates.length === 0) groups = blocks;
   const colMode: number[] = [];
   for (let c = 0; c < money.length; c++) colMode.push(money[c] ? shColMode(rows, h.row + 1, c) : 0);
   const lines: string[] = [];
@@ -6003,15 +6034,15 @@ interface LineInfo {
 interface AmountPick { best: Candidate | null; candidates: Candidate[]; currency: string; confidence: string; reason: string; doc: DocInfo; ev: AdviceEvidence }
 
 // total and payment labels (also NL, FR, IT, ES, PT, PL, CZ, DA/SV totals, "paid" participles and transfer nouns)
-const STRONG_KEYWORDS = /gesamt|zahlbetrag|auszuzahlende[rn]? betrag|payout total|transfer to (?:your )?bank(?: account)?|funds transferred|transferred to your (?:bank )?account|net remitted|total remitted|remitted amount|net payout|total payout|payout amount|amount paid out|paid out|amount disbursed|disbursement amount|zahlungsbetrag|überweisungsbetrag|ueberweisungsbetrag|überweisungssumme|auszahlungsbetrag|auszahlung\b|gutschriftsbetrag|erstattungsbetrag|endbetrag|endsumme|summe|total|nettobetrag der zahlung|betrag der überweisung|wir überweisen|überwiesen|ueberwiesen|überweisen wir|überweisen ihnen|zahlung in höhe|zahlen wir|wir zahlen|zu zahlen|angewiesen|den betrag von|gutgeschrieben|zu ihren gunsten|betrag der zahlung|überweisung\b|ueberweisung\b|ausgleichsbetrag|gezahlte[rn]? betrag|bezahlte[rn]? betrag|nettozahlung|gutschrift auf ihr konto|remittance total|remittance amount|amount remitted|amount paid|payment amount|net amount paid|net payment|total paid|payment total|check amount|credited amount|amount credited|transfer amount|amount transferred|we have (?:today )?(?:paid|transferred|remitted)|payment of\b|totaal|celkem|\bi alt\b|totalt|\bsumma\b|\bsuma\b|razem|betaald|overgemaakt|overboeking|réglé|reglé|payé|viré|versé|virement|pagato|bonifico|bonificato|pagado|transferencia|transferido|abonado|valor pago|montante pago|total pago|transferência|przelew|przelano|zapłacono|zapłacona|wpłacono|uregulowano|uhrazen|zaplacen|převedeno|betalt|overført|indbetalt|överfört|utbetalt|nous avons (?:réglé|payé|viré|versé)|wij hebben (?:betaald|overgemaakt)|abbiamo (?:pagato|bonificato|saldato)|hemos (?:pagado|transferido|abonado)|efetu[aá]mos|pagámos|transferimos|uhradili jsme|jsme uhradili|zaplatili jsme|jsme zaplatili|převedli jsme|przelaliśmy|zapłaciliśmy|uregulowaliśmy|vi har (?:betalt|overført|betalat|överfört)|montant (?:du |de )?(?:règlement|reglement|paiement|virement)|importo (?:del )?(?:pagamento|bonifico)|importe (?:del )?(?:pago|transferencia)|bedrag (?:van de )?betaling|kwota (?:płatności|przelewu)|částka (?:platby|úhrady)/i;
+const STRONG_KEYWORDS = /gesamt|zahlbetrag|auszuzahlende[rn]? betrag|payout total|transfer to (?:your )?bank(?: account)?|funds transferred|transferred to your (?:bank )?account|net remitted|total remitted|remitted amount|net payout|total payout|payout amount|amount paid out|paid out|amount disbursed|disbursement amount|zahlungsbetrag|überweisungsbetrag|ueberweisungsbetrag|überweisungssumme|auszahlungsbetrag|auszahlung\b|gutschriftsbetrag|erstattungsbetrag|endbetrag|endsumme|summe|total|nettobetrag der zahlung|betrag der überweisung|wir überweisen|überwiesen|ueberwiesen|überweisen wir|überweisen ihnen|zahlung in höhe|zahlen wir|wir zahlen|zu zahlen|angewiesen|den betrag von|gutgeschrieben|zu ihren gunsten|betrag der zahlung|überweisung\b|ueberweisung\b|ausgleichsbetrag|gezahlte[rn]? betrag|bezahlte[rn]? betrag|nettozahlung|gutschrift auf ihr konto|remittance total|remittance amount|amount remitted|amount paid|payment amount|payment value(?! date)|net amount paid|net payment|total paid|payment total|check amount|credited amount|amount credited|transfer amount|amount transferred|we have (?:today )?(?:paid|transferred|remitted)|payment of\b|totaal|celkem|\bi alt\b|totalt|\bsumma\b|\bsuma\b|razem|betaald|overgemaakt|overboeking|réglé|reglé|payé|viré|versé|virement|pagato|bonifico|bonificato|pagado|transferencia|transferido|abonado|valor pago|montante pago|total pago|transferência|przelew|przelano|zapłacono|zapłacona|wpłacono|uregulowano|uhrazen|zaplacen|převedeno|betalt|overført|indbetalt|överfört|utbetalt|nous avons (?:réglé|payé|viré|versé)|wij hebben (?:betaald|overgemaakt)|abbiamo (?:pagato|bonificato|saldato)|hemos (?:pagado|transferido|abonado)|efetu[aá]mos|pagámos|transferimos|uhradili jsme|jsme uhradili|zaplatili jsme|jsme zaplatili|převedli jsme|przelaliśmy|zapłaciliśmy|uregulowaliśmy|vi har (?:betalt|overført|betalat|överfört)|montant (?:du |de )?(?:règlement|reglement|paiement|virement)|importo (?:del )?(?:pagamento|bonifico)|importe (?:del )?(?:pago|transferencia)|bedrag (?:van de )?betaling|kwota (?:płatności|przelewu)|částka (?:platby|úhrady)/i;
 // words that mean "what was actually paid" (also the foreign participles and transfer nouns) – beat generic totals like "Summe Rechnungsbetrag"
-const PAYMENT_KEYWORDS = /zahlbetrag|gesamtzahlung|auszuzahlende[rn]? betrag|payout total|transfer to (?:your )?bank(?: account)?|funds transferred|transferred to your (?:bank )?account|zahlung gesamt|net remitted|total remitted|remitted amount|net payout|total payout|payout amount|amount paid out|paid out|amount disbursed|disbursement amount|zahlungsbetrag|überweisungsbetrag|ueberweisungsbetrag|überweisungssumme|auszahlung|gutschriftsbetrag|erstattungsbetrag|wir überweisen|überwiesen|ueberwiesen|überweisen wir|überweisen ihnen|zahlung in höhe|zahlen wir|wir zahlen|zu zahlen|angewiesen|den betrag von|gutgeschrieben|zu ihren gunsten|betrag der zahlung|überweisung\b|ueberweisung\b|zahlungssumme|ausgleichsbetrag|gezahlte[rn]? betrag|bezahlte[rn]? betrag|nettozahlung|gutschrift auf ihr konto|remittance total|remittance amount|amount remitted|amount paid|payment amount|net amount paid|net payment|total paid|payment total|check amount|credited amount|amount credited|transfer amount|amount transferred|we have (?:today )?(?:paid|transferred|remitted)|payment of\b|betaald|overgemaakt|overboeking|réglé|reglé|payé|viré|versé|virement|pagato|bonifico|bonificato|pagado|transferencia|transferido|abonado|valor pago|montante pago|total pago|transferência|przelew|przelano|zapłacono|zapłacona|wpłacono|uregulowano|uhrazen|zaplacen|převedeno|betalt|overført|indbetalt|överfört|utbetalt|nous avons (?:réglé|payé|viré|versé)|wij hebben (?:betaald|overgemaakt)|abbiamo (?:pagato|bonificato|saldato)|hemos (?:pagado|transferido|abonado)|efetu[aá]mos|pagámos|transferimos|uhradili jsme|jsme uhradili|zaplatili jsme|jsme zaplatili|převedli jsme|przelaliśmy|zapłaciliśmy|uregulowaliśmy|vi har (?:betalt|overført|betalat|överfört)|montant (?:du |de )?(?:règlement|reglement|paiement|virement)|importo (?:del )?(?:pagamento|bonifico)|importe (?:del )?(?:pago|transferencia)|bedrag (?:van de )?betaling|kwota (?:płatności|przelewu)|částka (?:platby|úhrady)/i;
+const PAYMENT_KEYWORDS = /zahlbetrag|gesamtzahlung|auszuzahlende[rn]? betrag|payout total|transfer to (?:your )?bank(?: account)?|funds transferred|transferred to your (?:bank )?account|zahlung gesamt|net remitted|total remitted|remitted amount|net payout|total payout|payout amount|amount paid out|paid out|amount disbursed|disbursement amount|zahlungsbetrag|überweisungsbetrag|ueberweisungsbetrag|überweisungssumme|auszahlung|gutschriftsbetrag|erstattungsbetrag|wir überweisen|überwiesen|ueberwiesen|überweisen wir|überweisen ihnen|zahlung in höhe|zahlen wir|wir zahlen|zu zahlen|angewiesen|den betrag von|gutgeschrieben|zu ihren gunsten|betrag der zahlung|überweisung\b|ueberweisung\b|zahlungssumme|ausgleichsbetrag|gezahlte[rn]? betrag|bezahlte[rn]? betrag|nettozahlung|gutschrift auf ihr konto|remittance total|remittance amount|amount remitted|amount paid|payment amount|payment value(?! date)|net amount paid|net payment|total paid|payment total|check amount|credited amount|amount credited|transfer amount|amount transferred|we have (?:today )?(?:paid|transferred|remitted)|payment of\b|betaald|overgemaakt|overboeking|réglé|reglé|payé|viré|versé|virement|pagato|bonifico|bonificato|pagado|transferencia|transferido|abonado|valor pago|montante pago|total pago|transferência|przelew|przelano|zapłacono|zapłacona|wpłacono|uregulowano|uhrazen|zaplacen|převedeno|betalt|overført|indbetalt|överfört|utbetalt|nous avons (?:réglé|payé|viré|versé)|wij hebben (?:betaald|overgemaakt)|abbiamo (?:pagato|bonificato|saldato)|hemos (?:pagado|transferido|abonado)|efetu[aá]mos|pagámos|transferimos|uhradili jsme|jsme uhradili|zaplatili jsme|jsme zaplatili|převedli jsme|przelaliśmy|zapłaciliśmy|uregulowaliśmy|vi har (?:betalt|overført|betalat|överfört)|montant (?:du |de )?(?:règlement|reglement|paiement|virement)|importo (?:del )?(?:pagamento|bonifico)|importe (?:del )?(?:pago|transferencia)|bedrag (?:van de )?betaling|kwota (?:płatności|przelewu)|částka (?:platby|úhrady)/i;
 // explicit label of the transferred amount (the end of a netting): beats computed totals
-const TRANSFER_LABEL = /überweisungsbetrag|gesamtzahlung|auszuzahlende[rn]? betrag|payout total|transfer to (?:your )?bank(?: account)?|funds transferred|transferred to your (?:bank )?account|net remitted|total remitted|remitted amount|net payout|total payout|payout amount|amount paid out|amount disbursed|disbursement amount|ueberweisungsbetrag|überweisungssumme|auszahlungsbetrag|auszahlbetrag|auszahlung\b|gutschriftsbetrag|erstattungsbetrag|zahlbetrag|zahlungsbetrag|zahlungssumme|überwiesene[rn]? (?:betrag|summe)|gezahlte[rn]? betrag|betrag der überweisung|betrag der zahlung|nettozahlung|amount paid|payment amount|net payment|total paid|amount remitted|remittance (?:amount|total)|transfer amount|amount transferred|check amount|credited amount|amount credited|totaal betaald|betaald bedrag|montant (?:réglé|payé|du virement|viré|versé)|total (?:réglé|payé|pagado|pago)|importo (?:pagato|bonificato|del bonifico)|totale pagato|importe (?:pagado|transferido|de la transferencia)|valor (?:pago|transferido)|montante pago|kwota (?:przelewu|zapłacona|płatności)|zapłacono|uhrazen[áo]|částka platby|zaplacen[áo] částka|betalt beløb|betalt belopp|montant (?:du |de )?(?:règlement|reglement|paiement|virement)|importo (?:del )?(?:pagamento|bonifico)|importe (?:del )?(?:pago|transferencia)|bedrag (?:van de )?betaling|částka úhrady/i;
+const TRANSFER_LABEL = /überweisungsbetrag|gesamtzahlung|auszuzahlende[rn]? betrag|payout total|transfer to (?:your )?bank(?: account)?|funds transferred|transferred to your (?:bank )?account|net remitted|total remitted|remitted amount|net payout|total payout|payout amount|amount paid out|amount disbursed|disbursement amount|ueberweisungsbetrag|überweisungssumme|auszahlungsbetrag|auszahlbetrag|auszahlung\b|gutschriftsbetrag|erstattungsbetrag|zahlbetrag|zahlungsbetrag|zahlungssumme|überwiesene[rn]? (?:betrag|summe)|gezahlte[rn]? betrag|betrag der überweisung|betrag der zahlung|nettozahlung|amount paid|payment amount|payment value(?! date)|net payment|total paid|amount remitted|remittance (?:amount|total)|transfer amount|amount transferred|check amount|credited amount|amount credited|totaal betaald|betaald bedrag|montant (?:réglé|payé|du virement|viré|versé)|total (?:réglé|payé|pagado|pago)|importo (?:pagato|bonificato|del bonifico)|totale pagato|importe (?:pagado|transferido|de la transferencia)|valor (?:pago|transferido)|montante pago|kwota (?:przelewu|zapłacona|płatności)|zapłacono|uhrazen[áo]|částka platby|zaplacen[áo] částka|betalt beløb|betalt belopp|montant (?:du |de )?(?:règlement|reglement|paiement|virement)|importo (?:del )?(?:pagamento|bonifico)|importe (?:del )?(?:pago|transferencia)|bedrag (?:van de )?betaling|částka úhrady/i;
 // payment verbs that follow the amount in a sentence ("3.454,00 EUR überwiesen")
 const POST_PAYMENT = /überwiesen|ueberwiesen|überweisen|gutgeschrieben|angewiesen|bezahlt|beglichen|ausgeglichen|geleistet|transferred|remitted|paid\b|betaald|overgemaakt|réglé|payé|viré|pagato|bonificato|pagado|transferido|zapłacono|przelano|uhrazen|zaplacen|betalt|overført|överfört/i;
 // label nouns that must be followed by an amount (safety net)
-const PAYMENT_LABEL = /zahlbetrag|zahlungsbetrag|überweisungsbetrag|ueberweisungsbetrag|überweisungssumme|auszahlungsbetrag|gutschriftsbetrag|zahlungssumme|betrag der zahlung|payment amount|amount paid|net payment|total paid|credited amount|amount credited/i;
+const PAYMENT_LABEL = /zahlbetrag|zahlungsbetrag|überweisungsbetrag|ueberweisungsbetrag|überweisungssumme|auszahlungsbetrag|gutschriftsbetrag|zahlungssumme|betrag der zahlung|payment amount|payment value(?! date)|amount paid|net payment|total paid|credited amount|amount credited/i;
 // running totals and balances are no payment, even when worded like one ("Saldo zu Ihren Gunsten", "bisher überwiesen")
 const CUMULATIVE = /(?:saldo|guthaben|kontostand)[^.]{0,25}zu ihren gunsten|\bbisher\b/i;
 const YEAR_TO_DATE = /year to date|\bytd\b|laufenden jahr|kumuliert|\bto date\b|\bso far\b|cumulative|running total|bislang/i;
@@ -6033,7 +6064,10 @@ const PART_PAYMENT = /anzahlung|abschlagszahlung|teilzahlung|vorzahlung|ratenzah
 const CAPITAL_BEFORE = /(?:(?:grund|stamm|aktien|kommandit|haft)kapital|gezeichnetes kapital|share capital|capital stock|capital social|capitale sociale|kapitał zakładowy|maatschappelijk kapitaal|geplaatst kapitaal|základní kapitál)\s*(?:(?:von|of|de|in höhe von)\s+)?[:=]?\s*(?:EUR|€|CHF|USD|GBP|PLN|zł|CZK|Kč)?\s*$/i;
 const NUMBER_LABEL_BEFORE = /(?:nr|(?:^|[^a-zäöüßà-ž])(?:no|rg|re|rechnung|pos|position|beleg|invoice|inv|art|artikel|kd|kunde|anzahl|menge|stk|stück)|#)\.?:?\s*$/i;
 const CURRENCY_TOKEN = /\b(?:EUR|CHF|USD|GBP|PLN|CZK|SEK|DKK|NOK|HUF|RON|BGN|JPY|CNY|CAD|AUD|TRY)\b|€|\$|£|¥|zł|Kč|\b[Ee][Uu][Rr][Oo]\b|\bSFr\b|\bFr\.(?= ?\d)/g;
-const PAYMENT_MARKER = /payout|paid out|disburse|amount transferred|funds transferred|transfer to (?:your )?bank|zahlung|zahlbetrag|\bzahlen|gezahlt|bezahlt|überw|ueberw|gutschrift|gutgeschrieben|ausgleich|beglichen|begleichen|skonto|payment|remittance|\bpaid\b|remitted|auszahlung|credited|credit advice|incoming payment|check no|check date|check amount|cheque|pay to the order/i;
+// payment wording (the English transfer nouns "wire transfer", "credit transfer" count like German "Überweisung"; a wire
+// only as a transfer of money: "we sent a wire", "wired the funds", not "copper wire" or "wire harness"; "transferred" only
+// with the reader's account: "transferred $1,234.56 to your account")
+const PAYMENT_MARKER = /payout|paid out|disburse|amount transferred|funds transferred|transfer to (?:your )?bank|zahlung|zahlbetrag|\bzahlen|gezahlt|bezahlt|überw|ueberw|gutschrift|gutgeschrieben|ausgleich|beglichen|begleichen|skonto|payment|remittance|\bpaid\b|remitted|auszahlung|credited|credit advice|incoming payment|check no|check date|check amount|cheque|pay to the order|(?:wire|bank|credit|funds?|money|telegraphic) transfer|transferred\b(?:[^.!?\n]|\.(?=\d)){0,40}?\b(?:to|into) your (?:bank |nominated |designated )?account|wire[- ]?transfer|\b(?:sent|send|sending|made|initiated|released|issued) (?:you )?(?:a|an|the|our) wire\b|\bwired (?:you |us )?(?:the )?(?:funds|money|payment|amount|balance|eur|usd|gbp|chf|€|\$|£|\d)|cash discount|settlement discount/i;
 // payment words of other languages: they count only together with a payer statement ("nous avons réglé"), because
 // foreign bank statements, payslips and bills use them too
 const FOREIGN_PAYMENT_MARKER = /zapłat|betaling|betaald|overgemaakt|paiement|règlement|reglement|réglé|virement|payé|pagamento|bonifico|pagato|\bpago\b|pagado|transferencia|transferência|płatnoś|przelew|zapłac|wpłat|plat[be]|úhrad|uhrazen|zaplacen|betalt|betalning|overført|överför/i;
@@ -6043,11 +6077,24 @@ const NON_PAYMENT_MARKER = /lieferschein|lieferavis|versandavis|versandanzeige|a
 // payment statement: "avviso di pagamento" / "aviso de pago" are also bills)
 const DE_EN_AVIS_TITLE = /zahlungsavis|payment advice|remittance advice|zahlungsmitteilung|erstattungsmitteilung|gutschriftsanzeige|zahlungsfreigabe|auszahlungsmitteilung|auszahlungsanzeige|regulierungsmitteilung|regulierungsschreiben|schadenregulierung|schadenabrechnung|entschädigungsabrechnung|überweisungsavis|ueberweisungsavis|zahlungsbenachrichtigung|zahlungsanzeige|vergütungsanzeige|verguetungsanzeige|payment notification/i;
 const AVIS_TITLE = /zahlungsavis|payment advice|remittance advice|zahlungsmitteilung|erstattungsmitteilung|gutschriftsanzeige|zahlungsfreigabe|auszahlungsmitteilung|auszahlungsanzeige|regulierungsmitteilung|regulierungsschreiben|schadenregulierung|schadenabrechnung|entschädigungsabrechnung|überweisungsavis|ueberweisungsavis|zahlungsbenachrichtigung|zahlungsanzeige|vergütungsanzeige|verguetungsanzeige|payment notification|avis de (?:paiement|virement|règlement|reglement)|betalingsadvies|betalingsbericht|avviso di (?:pagamento|bonifico)|aviso de (?:pago|transferencia|pagamento)|awizo (?:płatności|przelewu|zapłaty)|potwierdzenie (?:wykonania |realizacji )?(?:płatności|przelewu|transakcji)|avízo o platbě|platební avízo|oznámení o (?:platbě|úhradě)|betalingsadvis|betalingsavis|betalningsavi|betaalspecificatie|betalingsspecificatie|betaaladvies|potvrzení o (?:platbě|úhradě|provedení platby)|avízo o platbe|potvrdenie o (?:platbe|úhrade)|maksuilmoitus|maksuerittely|maksuaviisi|fizetési értesítő|átutalási értesítő|aviz de plat[ăa]|confirmare (?:de )?plat[ăa]|ödeme bildirimi/i;
-// title of a bank transfer form (order confirmation of the payer's bank, "Avis zur SEPA-Überweisung")
-const TRANSFER_TITLE = /überweisung|ueberweisung|ausführungsbestätigung|zahlungsauftrag|payment order|wire transfer|transfer confirmation|credit transfer|virement|bonifico|transferencia|przelew|převod|swift (?:message |mt ?103 )?copy|swift confirmation|\bmt ?103\b|single customer credit transfer|funds transfers?|application for (?:outward |overseas )?(?:funds transfers?|remittance)|outward remittance|telegraphic transfer/i;
+// a payer's payment form named by a stand-alone title line without the word "advice" ("REMITTANCE", "Payment made",
+// "PAYMENT VOUCHER", German "AVIS"): an advice title only when nothing else says what the document is, it is no letter
+// (a letter is judged by its sentences), has payment wording, no open amount, no payment for later or not made, and does
+// not address the reader as the payer ("Your payment to ... has been made" is the reader's receipt); "Avis" alone also
+// announces deliveries: not with delivery words
+const PAYER_DOC_TITLE = /^(?:remittance|payment (?:made|voucher)|avis)\s*:?$/i;
+const READER_PAID = /\byour (?:payment|transfer|remittance)\b|\byou (?:have |had )?(?:paid|sent|made|transferred|remitted)\b|\bihre (?:zahlung|überweisung)\b/i;
+const DELIVERY_WORD = /liefer(?!ant)|versand|sendung|abhol|zustell|spedition|palette|avisier|nachnahme|ankunft|warenausgang|wareneingang|\blkw\b|rampe|delivery|shipment|dispatch|despatch/i;
+// title of a bank transfer form (order confirmation of the payer's bank, "Avis zur SEPA-Überweisung"; the SWIFT printout
+// abbreviates "FIN 103 Single Customer Credt Transfer")
+const TRANSFER_TITLE = /überweisung|ueberweisung|ausführungsbestätigung|zahlungsauftrag|payment order|wire transfer|transfer confirmation|cred(?:i)?t transfer|\bfin ?103\b|virement|bonifico|transferencia|przelew|převod|swift (?:message |mt ?103 )?copy|swift confirmation|\bmt ?103\b|funds transfers?|application for (?:outward |overseas )?(?:funds transfers?|remittance)|outward remittance|telegraphic transfer/i;
 const TRANSFER_FIELD = /^(?:betrag|überweisungsbetrag|ueberweisungsbetrag|auftragsbetrag|amount|transfer amount|montant|importo|importe|kwota|částka|:32a:\s*\d{6}|(?:currency (?:&|and) )?interbank settle(?:d|ment) amount|amount remitted|remittance amount|settlement amount)\s*(?:\(?(?:eur|chf|usd|gbp|€)\)?)?\s*:?\s*(?:eur|chf|usd|gbp|€)?\s*$/i;
-// fields of a bank posting (two of them make a "Gutschrift" a bank credit, not a supplier credit note)
-const BANK_FIELD = /buchungstag|buchungsdatum|valuta|wertstellung|auftraggeber|ordering customer|value date|begünstigter|beneficiary|zahlungsempfänger|\bempfänger\b|empfänger-iban|iban empfänger|rachunek (?:nadawcy|odbiorcy|zleceniodawcy|beneficjenta)|data (?:operacji|księgowania|waluty)|zleceniodawca|beneficjent|opdrachtgever|begunstigde|valutadatum|rentedatum|donneur d'ordre|bénéficiaire|date de valeur|ordinante|beneficiario|data valuta|ordenante|fecha (?:de )?valor|plátce|účet příjemce|datum zaúčtování|remitter|ordering institution|:50[afk]:|:59[af]?:|:57[a-d]:|:32a:/gi;
+// the debit of the payer's account in its bank's transfer form: the transfer amount plus fees, or converted into the
+// account currency ("Total debit $16,597.77" beside "Amount 15,192.59 EUR")
+const DEBIT_TOTAL = /total debit|amount debited|debit(?:ed)? amount|belastungsbetrag|gesamtbelastung/i;
+// fields of a bank posting (two of them make a "Gutschrift" a bank credit, not a supplier credit note); "From account" /
+// "Debit account" / "Originator" of an English bank form name the ordering party ("Auftraggeber"), "Payee" the payee
+const BANK_FIELD = /buchungstag|buchungsdatum|valuta|wertstellung|auftraggeber|ordering customer|ordering party|originator|from account|debit account|value date|begünstigter|beneficiary|\bpayee\b|zahlungsempfänger|\bempfänger\b|empfänger-iban|iban empfänger|rachunek (?:nadawcy|odbiorcy|zleceniodawcy|beneficjenta)|data (?:operacji|księgowania|waluty)|zleceniodawca|beneficjent|opdrachtgever|begunstigde|valutadatum|rentedatum|donneur d'ordre|bénéficiaire|date de valeur|ordinante|beneficiario|data valuta|ordenante|fecha (?:de )?valor|plátce|účet příjemce|datum zaúčtování|remitter|ordering institution|:50[afk]:|:59[af]?:|:57[a-d]:|:32a:/gi;
 // other document types in the title area (first lines of page 1, larger font)
 const OTHER_TITLE = /mahnung|zahlungserinnerung|zahlungsaufforderung|letzte aufforderung|forderungsaufstellung|inkassoauftrag|inkassoforderung|mahnbescheid|vollstreckungsbescheid|zahlungsbefehl|payment reminder|reminder\b|overdue|final notice|dunning|\brappel\b|relance|herinnering|aanmaning|sollecito|recordatorio de pago|requerimiento de pago|wezwanie do zapłaty|upomnienie|upomínka|výzva k (?:úhradě|zaplacení)|rykker|påminnelse|påmindelse|stornorechnung|\bstorno\b|rechnungskorrektur|korrekturrechnung|angebot|quotation|\bquote\b|kostenvoranschlag|kostenangebot|\bofferte\b|\bdevis\b|preventivo|presupuesto|nabídka|auftragsbestätigung|auftragsbestaetigung|order confirmation|bestellbestätigung|bestätigung ihrer bestellung|purchase order|bestellschreiben|einkaufsbestellung|bon de commande|orden de compra|ordine d'acquisto|versandbestätigung|versandmitteilung|shipping confirmation|shipment notification|ist unterwegs|wurde versandt|has (?:been )?shipped|lieferschein|lieferavis|versandavis|delivery note|packing list|packliste|arrival notice|notice of arrival|ankunftsmeldung|ankunftsavis|avis d'arrivée|container arrival|bill of lading|frachtbrief|verzollungsavis|zollavis|zollanmeldung|abgabenmitteilung|einfuhrabgaben|zollbescheid|customs (?:clearance|entry|notice|invoice)|import duty|pro-?forma|abschlagsrechnung|teilrechnung|schlussrechnung|vorauszahlungsrechnung|anzahlungsrechnung|gehaltsabrechnung|entgeltabrechnung|lohnabrechnung|verdienstabrechnung|bezügemitteilung|bezügeabrechnung|brutto[/-]netto|lohn- und gehalt|payslip|pay slip|salary (?:statement|slip)|earnings statement|reisekostenabrechnung|reisekosten|spesenabrechnung|travel expense|expense (?:report|claim)|kontoauszug|account statement|bank statement|statement of account|saldenbestätigung|saldenabstimmung|saldenmitteilung|(?:kreditkarten|firmenkarten)abrechnung|abrechnung ihrer (?:firmen)?kreditkarte|ihrer firmenkreditkarte|credit card statement|preisliste|price list|allgemeine (?:geschäfts|verkaufs|liefer|einkaufs)|geschäftsbedingungen|terms and conditions|abholavis|benachrichtigungskarte|nachnahme|zahlungsplan|abschlagsplan|tilgungsplan|ratenplan|ratenzahlungsvereinbarung|ratenvereinbarung|teilzahlungsvereinbarung|stundungsvereinbarung|instal?lment (?:plan|agreement)|lastschrift|vorabankündigung|pre-?notification|rückgabe|rücküberweisung|rückbuchung|zurückgegeben|nicht ausgeführt|abgelehnt|returned|rejected|überweisungsträger|überweisungsvordruck|zahlschein|einzahlungsschein|zahlteil|empfangsschein|payment slip|relevé de compte|relevé bancaire|estratto conto|extracto de cuenta|extracto bancario|rekeningafschrift|bankafschrift|wyciąg bankowy|wyciąg z rachunku|výpis z účtu|bankovní výpis|kontoudtog|kontoutdrag|bulletin de (?:paie|salaire)|fiche de paie|cedolino|busta paga|\bnómina\b|loonstrook|salarisstrook|mise en demeure|ingebrekestelling|pagopa|avis d'échéance|avis de prélèvement|umsatzübersicht|umsatzliste|kontoumsätze|account activity|transaction history|auszahlungsvorschau|payout preview|payout forecast|vorläufige abrechnung|zahlungsvorschlag/i;
 // a title word right after one of these refers to another document ("Zahlung zu Ihrer Schlussrechnung")
@@ -6063,12 +6110,22 @@ const INVOICE_START = /^(?:rechnung|rechnungskopie|invoice|tax invoice|faktura|f
 // amount-due labels of invoices ("Net à payer", "Totale da pagare", "Amount due")
 const DUE_LABEL = /zu zahlen|zahlbar|amount due|balance due|total due|à payer|a payer|te betalen|da pagare|a pagar|do zapłaty|k úhradě|k zaplacení|at betale|att betala/i;
 const CREDIT_TITLE = /^(?:gutschrift|lieferantengutschrift|gutschriftsrechnung|credit note|credit memo|creditnota|avoir|nota di credito|nota de crédito|dobropis|kreditnota|faktura korygująca)(?:(?:\s*-?\s*(?:nr\.?|no\.?|n°|nummer|number|#)|\s*:)?\s*(?=[\w\/.-]*\d)[A-Z0-9][\w\/.-]*)?$/i;
+// the vendor payment record of accounting software (NetSuite, QuickBooks: "Bill Payment", "Bill Payment Summary") as a
+// title line of its own
+const BILL_PAYMENT_TITLE = /^bill payments?(?: (?:summary|details|confirmation|notification|stub|voucher|receipt))?$/i;
+// a debit note of the customer as the title line ("DEBIT NOTE", "Debit memo DM-4711"; the German "Belastungsanzeige" is
+// DEBIT_DOC): it charges the supplier, no payment advice
+const DEBIT_TITLE = /^(?:debit note|debit memo)(?:(?:\s*-?\s*(?:no\.?|number|#)|\s*:)?\s*(?=[\w\/.-]*\d)[A-Z0-9][\w\/.-]*)?$/i;
 // credit notes listed in their own block ("Gutschriften", "Gutschrift GS-0007 238,00")
 const CREDIT_WORD = /gutschrift(?!sbetrag|sanzeige| auf| aus| erfolgt| sollte| wird)|credit note|credit memo|creditnota|\bavoir\b|nota di credito|nota de crédito|dobropis|kreditnota/i;
 const CREDIT_SECTION = /^\s*(?:ihre |unsere |abzgl\.? |abzüglich |\.\/\. )?(?:gutschriften|gutschrift|credit notes?|credit memos?|creditnota'?s?|avoirs?|note di credito|notas de crédito)\s*:?\s*$/i;
 // the document naming itself ("Rückfragen zu diesem Zahlungsavis", "queries regarding this remittance advice"): removed
 // before REQUEST_ADVICE is tested
 const SELF_ADVICE = /\b(?:dies(?:e[mnrs]?)?|this|our|unser(?:e[mnrs]?)?)\s+(?:zahlungsavis|avis|remittance(?:\s+advice)?|payment advice)\b/gi;
+// advice words in the plural name advices or payments in general ("Remittance advices will be e-mailed after each payment
+// run", "for all future remittances", "Zahlungsavise senden Sie bitte an ..."), not the document itself: removed before
+// an advice title or word is looked for in running text
+const ADVICE_PLURAL = /\b(?:remittance advices|payment advices|remittances|zahlungsavise)\b/gi;
 // the writer asks for a payment advice (dunning letter, reply of the payee): never an advice itself
 const REQUEST_ADVICE = /(?:senden|schicken|übermitteln|übersenden|mailen|faxen|reichen) sie (?:uns )?(?:bitte )?(?![^.]{0,60}(?:rückfrage|reklamation|einwänd|einwand|einspruch|unstimmigkeit|abweichung|beanstandung))[^.]{0,60}(?:zahlungsavis|zahlungsnachweis|überweisungsbeleg|überweisungsnachweis)|(?:zahlungsavis|\bavis) (?:fehlt|liegt (?:uns )?(?:(?:aber|leider|noch|bisher|bislang|weiterhin) )*nicht vor)|kein(?:e|en)? (?:zahlungsavis|\bavis\b)(?![^.]{0,40}(?:wollen|möchten|mehr\b))[^.]{0,30}(?:vor\b|erhalten)|(?:please|kindly) (?:send|provide|forward|e-?mail)(?: us)?(?![^.]{0,60}(?:quer|question|enquir|inquir))[^.]{0,60}(?:remittance|payment advice|proof of payment)|remittance advice (?:is )?missing|zahlungsavise? bitte (?:an|per|via)\s|veuillez (?:nous )?(?:envoyer|transmettre|faire parvenir)[^.]{0,60}avis|bitte um (?:(?:zusendung|übersendung|übermittlung|nachreichung) )?(?:(?:ein|eine[ns]?|das|des) )?(?:zahlungsavis|\bavis\b|zahlungsnachweis)|bitte[n]?(?: sie| wir)?(?: sie)? um (?:die )?(?:zusendung|übersendung|übermittlung|nachreichung) (?:(?:eines?|einer|des|der|ihres|ihrer|das|ein) )?(?:[a-zäöüß]+e[nrsm]? )?(?:zahlungsavis|\bavis\b|zahlungsnachweis|überweisungsbeleg)|anforderung (?:eines |des |von )?(?:zahlungsavis|\bavis\b)|(?:zahlungsavis|\bavis\b)[^.]{0,40}\bweder\b[^.]{0,60}\bnoch\b[^.]{0,40}erhalten|request(?:ing)? (?:for )?(?:a |an |the |your )?(?:remittance|payment advice)|(?:have )?not (?:yet )?received (?:a |any |the |your )?(?:remittance|payment advice)|(?:zahlungsavis|\bavis\b) (?:angefordert|erbeten)|(?:but|without) (?:no |a |any )?(?:remittance|payment) advice/i;
 // the other party's request named by the payer ("Ihrer Bitte um Zusendung des Zahlungsavis kommen wir nach", "further to
@@ -6122,19 +6179,24 @@ const NO_PAYMENT = /(?:auszahlung|überweisung|zahlung|erstattung|rückzahlung)(
 const PAYROLL_WORD = /lohnsteuer|sozialversicherung|rentenversicherung|krankenversicherung|steuerklasse|kirchensteuer|solidaritätszuschlag|gesetzliche abzüge|personalnummer|national insurance|income tax|gross pay|net pay/gi;
 const EXPENSE_WORD = /verpflegungsmehraufwand|kilometerpauschale|übernachtung|reisezweck|reiseziel|dienstreise|per diem|mileage|reiseantritt/gi;
 const SHIPPING_WORD = /\bvessel\b|\bvoyage\b|\beta\b|container|b\/l\b|port of (?:loading|discharge)|demurrage|terminal handling|freight|schiff|reederei|löschhafen/gi;
-// payer's statement of a payment ("wir haben ... überwiesen", "we have paid")
-const PAYER_STATEMENT = /(?:wir haben|haben wir|wurde|wurden|wird|werden)[^.]{0,80}(?:überwiesen|ueberwiesen|angewiesen|bezahlt|beglichen|ausgeglichen|gutgeschrieben)|(?:überweisen|zahlen|begleichen) wir(?![^.]{0,60}(?:unabhängig|vereinbarten fälligkeit|fristgerecht|bei fälligkeit|nach fälligkeit|wie gewohnt))|anbei (?:erhalten sie )?(?:die|unsere) zahlung(?!serinnerung|saufforderung|sbedingung|sziel|sfrist|splan|svereinbarung)|zahlung (?:für|zu) (?:ihre[rn]? )?rechnung|we have (?:today )?(?:paid|transferred|remitted|released|made|settled)|has been (?:paid|transferred|remitted|settled)|payment (?:has been|was) (?:made|sent|released|initiated)|nous avons (?:réglé|payé|viré|effectué)|wij hebben[^.]{0,40}(?:betaald|overgemaakt)|abbiamo[^.]{0,40}(?:pagato|bonificato|effettuato)|hemos[^.]{0,40}(?:pagado|transferido|realizado)|(?:jsme|uhradili|zaplatili)[^.]{0,40}(?:uhradili|zaplatili|převedli|jsme)|(?:przelaliśmy|zapłaciliśmy|uregulowaliśmy|dokonaliśmy|zrealizowaliśmy|zleciliśmy|wykonaliśmy|wpłaciliśmy|przekazaliśmy)|przelew (?:został )?(?:zrealizowany|wykonany)|zrealizowano (?:przelew|płatność)|vi har[^.]{0,40}(?:betalt|overført|betalat|överfört)|(?:efetu[aá]mos|pagámos|transferimos)/i;
+// payer's statement of a payment ("wir haben ... überwiesen", "ist ... bezahlt worden", "die Zahlung ist heute raus", "we
+// have paid", "we've paid", "we sent a wire", "we made a payment", "please find our payment", "a payment of €1,204.00 has
+// been made", "invoice X was paid today", "invoices ... were paid", "the amount was transferred", "payment has gone out");
+// not a relative or "dass" clause ("invoices that were paid ...", "ist aufgefallen, dass ... bezahlt worden ist") and not
+// the reader's payment ("was paid by you")
+const PAYER_STATEMENT = /(?:wir haben|haben wir|wurde|wurden|wird|werden)[^.]{0,80}(?:überwiesen|ueberwiesen|angewiesen|bezahlt|beglichen|ausgeglichen|gutgeschrieben)|(?:überweisen|zahlen|begleichen) wir(?![^.]{0,60}(?:unabhängig|vereinbarten fälligkeit|fristgerecht|bei fälligkeit|nach fälligkeit|wie gewohnt))|anbei (?:erhalten sie )?(?:die|unsere) zahlung(?!serinnerung|saufforderung|sbedingung|sziel|sfrist|splan|svereinbarung)|zahlung (?:für|zu) (?:ihre[rn]? )?rechnung|has been (?:paid|transferred|remitted|settled)|nous avons (?:réglé|payé|viré|effectué)|wij hebben[^.]{0,40}(?:betaald|overgemaakt)|abbiamo[^.]{0,40}(?:pagato|bonificato|effettuato)|hemos[^.]{0,40}(?:pagado|transferido|realizado)|(?:jsme|uhradili|zaplatili)[^.]{0,40}(?:uhradili|zaplatili|převedli|jsme)|(?:przelaliśmy|zapłaciliśmy|uregulowaliśmy|dokonaliśmy|zrealizowaliśmy|zleciliśmy|wykonaliśmy|wpłaciliśmy|przekazaliśmy)|przelew (?:został )?(?:zrealizowany|wykonany)|zrealizowano (?:przelew|płatność)|vi har[^.]{0,40}(?:betalt|overført|betalat|överfört)|(?:efetu[aá]mos|pagámos|transferimos)|(?:\bno )?\b(?:payments?|(?:payment|transfer|remittance)s? (?:of|for|in the amount of|amounting to|totall?ing)\b(?:[^.!?]|\.(?=\d)){1,60}?) (?:(?:has|have)(?: today)? been|was|were) (?:made|sent|released|initiated|effected|executed)\b|\b(?:ist|sind)\b(?:(?!\b(?:dass|ob|wenn|falls|sofern|nicht)\b|daß )[^.]){0,80}(?:überwiesen|ueberwiesen|angewiesen|bezahlt|beglichen|ausgeglichen) worden\b|(?:zahlung(?:en)?|überweisung(?:en)?|ueberweisung(?:en)?|(?:^|[^a-zäöüß])geld)\b[^.!?\n]{0,60}?\b(?:ist|sind) (?:(?:heute|gestern|jetzt|eben|soeben|gerade|bereits|schon|nun) )*raus(?:gegangen)?\b(?! ?aus\b)|we(?: have|['\u2019]ve) (?:(?:today|just|now|also|already) )?(?:paid|transferred|remitted|released|made|settled)|\bwe(?: have|['\u2019]ve)? (?:(?:today|just|now|also|already) )?(?:(?:sent|made|initiated|released|issued|executed) (?:you )?(?:(?:a|an|the|our) )?(?:(?:wire|bank|telegraphic|electronic|international|sepa|swift|ach) )?(?:payment|transfer|wire|remittance)\b(?! (?:reminder|request|terms|plan|schedule|proposal|demand|notice|instructions|details|information))|wired (?:you |us )?(?:the )?(?:funds|money|payment|amount|balance|eur|usd|gbp|chf|€|\$|£|\d))|please find (?:(?:enclosed|attached|below|herewith) )?(?:our|the) (?:payment|remittance)\b(?! (?:reminder|request|terms|plan|schedule|proposal|demand|notice|instructions|details|information))|\b(?!(?:that|which|who)\b)[a-z0-9)]+ (?:have been|was|were) (?:(?:today|just|now|also|already|fully|all|both) )?(?:paid|remitted)\b(?! (?:by|from) you\b| to us\b)|\b(?:invoices?|amounts?|balance|sums?|funds|money)\b(?:(?!\b(?:that|which)\b)[^.!?\n]){0,60}?\b(?:has been|have been|was|were) (?:(?:today|just|now|also|already|fully|all|both) )?(?:transferred|settled)\b|(?:payments?|\btransfers?|\bwires?|\bremittances?|\bfunds|\bmoney) (?:has been|have been|was|were) (?:(?:today|just|now|also|already) )?(?:made|sent|released|initiated|issued|executed|wired|transferred|remitted)\b(?! back\b)|(?:payments?|\btransfers?|\bwires?|\bremittances?|\bfunds|\bmoney)\b(?! (?:reminder|request|terms|plan|schedule|proposal|demand|notice|instructions|details|information))[^.!?\n]{0,60}?\b(?:has gone|have gone|went) out\b(?! of\b)|we have (?:(?:today|now|also|just|already|duly|additionally|separately|this day) ){0,2}(?:paid(?! (?:close |particular |special |great )?(?:attention|heed|tribute))|transferred|remitted|released|made|settled)/i;
 // first-person statement of a completed payment ("wir haben ... überwiesen", also across "1.204,00"), also in a clause
 // ("dass wir heute ... an Sie angewiesen haben", not "ob Sie ... überwiesen haben" or "... noch nicht überwiesen haben"),
-// and today's payment ("heute überweisen wir", "überweisen wir Ihnen heute"); invoices and orders say "wird ... bezahlt"
-const PAYER_DONE = /(?:wir haben|haben wir)(?:[^.]|\.(?=\d)){0,80}(?:überwiesen|ueberwiesen|angewiesen|bezahlt|beglichen|ausgeglichen|(?:zahlung|überweisung)(?:[^.]|\.(?=\d)){0,40}(?:geleistet|veranlasst|vorgenommen|ausgeführt|getätigt))|we have (?:today )?(?:paid|transferred|remitted|settled)|\bwir\b(?:(?!(?:dass|daß|ob|wenn|falls|da|nachdem|sofern|sobald|wann|weil|wie|warum|seit) sie\b|nicht\b|noch\b)[^.]|\.(?=\d)){0,100}(?:überwiesen|ueberwiesen|angewiesen|bezahlt|beglichen|ausgeglichen|geleistet) haben\b|\b(?:heute|hiermit|nunmehr)\b[^.]{0,40}(?:überweisen|zahlen|begleichen|bezahlen|leisten) wir\b|(?:überweisen|zahlen|begleichen|bezahlen|leisten) wir\b(?:[^.]|\.(?=\d)){0,60}\b(?:heute|hiermit|nunmehr)\b|\bwir (?:überweisen|zahlen|begleichen|bezahlen|leisten)\b(?:[^.]|\.(?=\d)){0,40}\b(?:heute|hiermit|nunmehr)\b|\b(?:heute|hiermit)\b(?:(?!von ihnen|by you)[^.]|\.(?=\d)){0,80}(?:überwiesen|angewiesen|bezahlt|beglichen|geleistet) (?:wurde|wurden|worden)\b|\b(?:zahlung|überweisung|teilzahlung|abschlagszahlung|restzahlung)\b(?:[^.]|\.(?=\d)){0,80}\b(?:ist|wurde)\b(?:[^.]|\.(?=\d)){0,30}\bheute\b(?:[^.]|\.(?=\d)){0,60}\b(?:erfolgt|ausgeführt|veranlasst)\b|\btoday,? we (?:have )?(?:paid|transferred|remitted|settled)\b|\bwe (?:paid|transferred|remitted|settled)\b(?:[^.]|\.(?=\d)){0,60}\btoday\b/i;
+// and today's payment ("heute überweisen wir", "überweisen wir Ihnen heute", "a payment of €1,204.00 has been made today",
+// "we sent a wire ... today"); invoices and orders say "wird ... bezahlt"
+const PAYER_DONE = /(?:wir haben|haben wir)(?:[^.]|\.(?=\d)){0,80}(?:überwiesen|ueberwiesen|angewiesen|bezahlt|beglichen|ausgeglichen|(?:zahlung|überweisung)(?:[^.]|\.(?=\d)){0,40}(?:geleistet|veranlasst|vorgenommen|ausgeführt|getätigt))|\bwir\b(?:(?!(?:dass|daß|ob|wenn|falls|da|nachdem|sofern|sobald|wann|weil|wie|warum|seit) sie\b|nicht\b|noch\b)[^.]|\.(?=\d)){0,100}(?:überwiesen|ueberwiesen|angewiesen|bezahlt|beglichen|ausgeglichen|geleistet) haben\b|\b(?:heute|hiermit|nunmehr)\b[^.]{0,40}(?:überweisen|zahlen|begleichen|bezahlen|leisten) wir\b|(?:überweisen|zahlen|begleichen|bezahlen|leisten) wir\b(?:[^.]|\.(?=\d)){0,60}\b(?:heute|hiermit|nunmehr)\b|\bwir (?:überweisen|zahlen|begleichen|bezahlen|leisten)\b(?:[^.]|\.(?=\d)){0,40}\b(?:heute|hiermit|nunmehr)\b|\b(?:heute|hiermit)\b(?:(?!von ihnen|by you)[^.]|\.(?=\d)){0,80}(?:überwiesen|angewiesen|bezahlt|beglichen|geleistet) (?:wurde|wurden|worden)\b|\b(?:zahlung|überweisung|teilzahlung|abschlagszahlung|restzahlung)\b(?:[^.]|\.(?=\d)){0,80}\b(?:ist|wurde)\b(?:[^.]|\.(?=\d)){0,30}\bheute\b(?:[^.]|\.(?=\d)){0,60}\b(?:erfolgt|ausgeführt|veranlasst)\b|(?:\bno )?\b(?:payments?|(?:payment|transfer|remittance)s? (?:of|for|in the amount of|amounting to|totall?ing)\b(?:[^.]|\.(?=\d)){1,60}?) (?:(?:has|have) today been (?:made|sent|released|initiated|effected|executed)\b|(?:(?:has|have) been|was|were) (?:made|sent|released|initiated|effected|executed)\b(?:[^.]|\.(?=\d)){0,40}?\btoday\b)|we(?: have|['\u2019]ve) (?:(?:today|just|now|also|already) )?(?:paid|transferred|remitted|settled)|\b(?:today|this morning),? we(?: have|['\u2019]ve)? (?:(?:paid|transferred|remitted|settled)\b|wired (?:you |us )?(?:the )?(?:funds|money|payment|amount|balance|eur|usd|gbp|chf|€|\$|£|\d)|sent (?:you )?(?:(?:a|an|the|our) )?(?:(?:wire|bank|telegraphic|electronic|international|sepa|swift|ach) )?(?:payment|transfer|wire|remittance)\b(?! (?:reminder|request|terms|plan|schedule|proposal|demand|notice|instructions|details|information)))|\bwe (?:(?:paid|transferred|remitted|settled)\b|wired (?:you |us )?(?:the )?(?:funds|money|payment|amount|balance|eur|usd|gbp|chf|€|\$|£|\d)|sent (?:you )?(?:(?:a|an|the|our) )?(?:(?:wire|bank|telegraphic|electronic|international|sepa|swift|ach) )?(?:payment|transfer|wire|remittance)\b(?! (?:reminder|request|terms|plan|schedule|proposal|demand|notice|instructions|details|information)))(?:[^.]|\.(?=\d)){0,60}\b(?:today|this morning)\b|we have (?:(?:today|now|also|just|already|duly|additionally|separately|this day) ){0,2}(?:paid(?! (?:close |particular |special |great )?(?:attention|heed|tribute))|transferred|remitted|settled)/i;
 // an open amount or a direct debit next to a foreign advice title ("Aviso de pago pendiente", pagoPA "Avviso di
 // pagamento", "hemos realizado el cargo en su cuenta")
 const FOREIGN_OPEN = /pendiente|pendente|in sospeso|data limite|fecha límite|date limite|pagopa|codice avviso|prélèvement|domiciliación|domiciliazione|addebito|\bcargo\b|adeudo|\bincasso\b|obciążen|inkas|débito|si ya ha pagado|già pagato|déjà (?:payé|réglé)|\breeds betaald|\bal betaald/i;
 // sentences of the writer: first person, payment verb, an earlier payment ("haben wir bereits am 01.10.2026 überwiesen")
-// and the current one ("heute überweisen wir den Restbetrag")
+// and the current one ("heute überweisen wir den Restbetrag", "we sent a wire for EUR 922.02 today")
 const FIRST_PERSON = /\b(?:wir|we|ich)\b/i;
-const SENT_PAY = /überwiesen|ueberwiesen|überweisen|ueberweisen|angewiesen|bezahlt|gezahlt|beglichen|begleichen|ausgeglichen|geleistet|transferred|transferring|remitted|paid\b|settled/i;
+const SENT_PAY = /überwiesen|ueberwiesen|überweisen|ueberweisen|angewiesen|bezahlt|gezahlt|beglichen|begleichen|ausgeglichen|geleistet|transferred|transferring|remitted|paid\b|settled|\bwired (?:you |us )?(?:the )?(?:funds|money|payment|amount|balance|eur|usd|gbp|chf|€|\$|£|\d)|\bsent (?:you )?(?:(?:a|an|the|our) )?(?:(?:wire|bank|telegraphic|electronic|international|sepa|swift|ach) )?(?:payment|transfer|wire|remittance)\b(?! (?:reminder|request|terms|plan|schedule|proposal|demand|notice|instructions|details|information))/i;
 const PRIOR_SENT = /\b(?:bereits|schon|zuvor|already|previously|earlier)\b[^.]{0,60}(?:überwiesen|ueberwiesen|angewiesen|bezahlt|gezahlt|beglichen|ausgeglichen|geleistet|paid|transferred|remitted|settled)|(?:überwiesen|ueberwiesen|bezahlt|gezahlt|beglichen|paid|transferred)\b[^.]{0,20}\b(?:bereits|schon|zuvor|already|previously|earlier)\b/i;
 const CURRENT_WORD = /\b(?:heute|hiermit|nunmehr|today|herewith)\b|mit (?:dieser|der heutigen) (?:zahlung|überweisung)|restbetrag|restzahlung|schlusszahlung|schlussrate|letzte rate|verbleibende[nr]? (?:rest)?betrag|remaining (?:balance|amount)|final (?:instal|payment)/i;
 const REST_WORD = /restbetrag|restzahlung|verbleibende[nr]? (?:rest)?betrag|remaining (?:balance|amount)/i;
@@ -6142,8 +6204,9 @@ const REST_WORD = /restbetrag|restzahlung|verbleibende[nr]? (?:rest)?betrag|rema
 const FUTURE_SENT = /\b(?:werden|wird|will|shall)\b|nächste|naechste|kommende|künftig|später|sobald|\bnach (?:klärung|eingang|prüfung|erhalt|abschluss)|\bnext\b|\blater\b|\bonce\b|\bupon\b/i;
 // the auxiliaries of a later payment ("werden wir ... überweisen", "will be paid")
 const FUTURE_SENT_AUX = /\b(?:werden|wird|will|shall)\b/i;
-// the same without the auxiliaries: a payment put off to later ("nach Klärung", "sobald", "nächste Woche")
-const FUTURE_POSTPONE = /nächste|naechste|kommende|künftig|später|sobald|\bnach (?:klärung|eingang|prüfung|erhalt|abschluss|behebung|austausch)|\bnext\b|\blater\b|\bonce\b|\bupon\b|\bnach (?:abnahme|freigabe|lieferung|wareneingang|fertigstellung|montage|inbetriebnahme|vorlage|zugang|korrektur)|\bafter (?:the )?(?:goods|delivery|acceptance|approval|receipt|inspection|arrival|correction)|\bbeabsichtigen\b|\bintend to\b|\bplanen\b|\bin der \d{1,2}\.(?:\s?(?:kw|kalenderwoche)\b|\s*$)|\b(?:kw|kalenderwoche) ?\d{1,2}\b|\bin (?:calendar )?week \d{1,2}\b/i;
+// the same without the auxiliaries: a payment put off to later ("nach Klärung", "sobald", "nächste Woche", "in zwei weiteren
+// Raten", "in two further instalments")
+const FUTURE_POSTPONE = /nächste|naechste|kommende|künftig|später|sobald|\bweitere[nr]? (?:raten|teilzahlungen)\b|\bfurther instal(?:l)?ments?\b|\bnach (?:klärung|eingang|prüfung|erhalt|abschluss|behebung|austausch)|\bnext\b|\blater\b|\bonce\b|\bupon\b|\bnach (?:abnahme|freigabe|lieferung|wareneingang|fertigstellung|montage|inbetriebnahme|vorlage|zugang|korrektur)|\bafter (?:the )?(?:goods|delivery|acceptance|approval|receipt|inspection|arrival|correction)|\bbeabsichtigen\b|\bintend to\b|\bplanen\b|\bin der \d{1,2}\.(?:\s?(?:kw|kalenderwoche)\b|\s*$)|\b(?:kw|kalenderwoche) ?\d{1,2}\b|\bin (?:calendar )?week \d{1,2}\b/i;
 // "bereits / zuvor / earlier" that belongs to a reference to earlier talks, not to the payment ("wie zuvor telefonisch
 // besprochen", "wie bereits mitgeteilt", "as advised in our earlier e-mail")
 const PRIOR_ASIDE = /\b(?:wie|as)\s+(?:[a-zäöüß-]+\s+){0,4}?(?:mitgeteilt|besprochen|vereinbart|angekündigt|avisiert|informiert|advised|mentioned|discussed|agreed|notified|informed|stated|indicated)\b|\b(?:in|per|with|mit|laut|lt)\s+(?:our\s+|unserer?\s+|unserem\s+|the\s+|der\s+|dem\s+)?(?:earlier|previous|vorherigen|früheren|letzten)\s+(?:e-?mail|mail|letter|schreiben|nachricht|telefonat)/gi;
@@ -6155,19 +6218,20 @@ const DED_TOTAL = /(?:summe|gesamt|total|insgesamt)\s*(?:(?:der|aller|of(?: the)
 // amount is deducted, even when the label names a payment noun
 const DED_START = /^\s*(?:(?:EUR|€|CHF|USD|GBP)\s*)?(?:[-–]\s*)?(?:abzüglich|abzgl\.?|\.\/\.|minus|less|abzug)(?![a-zäöüß])/i;
 // a deduction noun right before the amount ("2 % Skonto (69,00 EUR)", "Skonto in Höhe von 23,80", "abzgl. Skonto 69,08",
-// "Gutschrift GS-26-0007 über 238,00"): the amount is the deduction in a computation
-const DED_BEFORE = /(?:skonto|abzug|abzüglich|abzgl\.?|rabatt|nachlass|discount|gebühr(?:en)?|spesen|charges|\bfees?|kürzung|einbehalt|minderung|gutschrift|credit note|\bless|\bminus|\.\/\.)(?:\s+(?:(?:nr\.?|no\.?)\s*)?[A-Za-z]{0,4}[-\/]?\d[\w\/.-]*,?)?(?:\s+(?:in höhe )?von|\s+of|\s+for|\s+über|\s+i\.\s?h\.\s?v\.)?\s*(?:\d{1,2}(?:[.,]\d{1,2})?\s?%\s*)?(?:[(:=]\s*)?(?:(?:EUR|€|CHF|USD|GBP)\s*)?$/i;
+// "Gutschrift GS-26-0007 über 238,00", "after deduction of €409.82"): the amount is the deduction in a computation
+const DED_BEFORE = /(?:skonto|abzug|abzüglich|abzgl\.?|deductions?|rabatt|nachlass|discount|gebühr(?:en)?|spesen|charges|\bfees?|kürzung|einbehalt|minderung|gutschrift|credit note|\bless|\bminus|\.\/\.)(?:\s+(?:(?:nr\.?|no\.?)\s*)?[A-Za-z]{0,4}[-\/]?\d[\w\/.-]*,?)?(?:\s+(?:in höhe )?von|\s+of|\s+for|\s+über|\s+i\.\s?h\.\s?v\.)?\s*(?:\d{1,2}(?:[.,]\d{1,2})?\s?%\s*)?(?:[(:=]\s*)?(?:(?:EUR|€|CHF|USD|GBP)\s*)?$/i;
 // the same with an explicit link to the amount ("Skonto (69,00", "Skonto in Höhe von 23,80", "discount of 15.00"), not
 // "abzüglich Skonto 3.454,00 EUR überwiesen" (the net amount): a payment verb after such an amount belongs to the sentence
-const DED_LINKED = /(?:skonto|abzug|rabatt|nachlass|discount|gebühr(?:en)?|spesen|charges|\bfees?|kürzung|einbehalt|minderung|gutschrift|credit note)(?:\s+(?:(?:nr\.?|no\.?)\s*)?[A-Za-z]{0,4}[-\/]?\d[\w\/.-]*,?)?\s*(?:\d{1,2}(?:[.,]\d{1,2})?\s?%\s*)?(?:\(|\s(?:in höhe )?von|\sof|\sfor|\süber|\si\.\s?h\.\s?v\.|:)\s*(?:(?:EUR|€|CHF|USD|GBP)\s*)?$/i;
-// a deduction noun right after the amount ("dabei 70,49 EUR Skonto abgezogen", "EUR 15.00 bank charges")
-const DED_NOUN_AFTER = /^\s?(?:EUR|€|CHF|USD|GBP)?\s?\)?\s?(?:skonto|rabatt|abzug|nachlass|bankgebühren|bankgebühr|bankspesen|gebühren|gebühr|spesen|kürzung|einbehalt|gutschrift(?! auf| erfolgt| wird)|discount|bank charges|charges|fees?|withholding tax|quellensteuer)(?![a-zäöüß])/i;
+const DED_LINKED = /(?:skonto|abzug|deductions?|rabatt|nachlass|discount|gebühr(?:en)?|spesen|charges|\bfees?|kürzung|einbehalt|minderung|gutschrift|credit note)(?:\s+(?:(?:nr\.?|no\.?)\s*)?[A-Za-z]{0,4}[-\/]?\d[\w\/.-]*,?)?\s*(?:\d{1,2}(?:[.,]\d{1,2})?\s?%\s*)?(?:\(|\s(?:in höhe )?von|\sof|\sfor|\süber|\si\.\s?h\.\s?v\.|:)\s*(?:(?:EUR|€|CHF|USD|GBP)\s*)?$/i;
+// a deduction noun right after the amount ("dabei 70,49 EUR Skonto abgezogen", "EUR 15.00 bank charges", "€409.82
+// settlement discount")
+const DED_NOUN_AFTER = /^\s?(?:EUR|€|CHF|USD|GBP)?\s?\)?\s?(?:skonto|rabatt|abzug|deductions?|nachlass|bankgebühren|bankgebühr|bankspesen|gebühren|gebühr|spesen|kürzung|einbehalt|gutschrift(?! auf| erfolgt| wird)|(?:(?:early |prompt )?(?:settlement |payment )|cash |trade |volume )?discount|bank charges|charges|fees?|withholding tax|quellensteuer)(?![a-zäöüß])/i;
 // the result of a computation in a sentence ("abzüglich 2 % Skonto, also 1.166,20 EUR", "= 1.166,20", "less discount, i.e.")
 const RESULT_WORD = /(?:^|[\s,;(])(?:also|somit|mithin|folglich|demnach|d\.\s?h\.|das sind|dies sind|das ergibt|ergibt sich|ergibt|ergeben|macht|insgesamt|zusammen|in summe|i\.\s?e\.|that is|which is|so|thus|hence|leaving|resulting in|net|netto|=)(?![a-zäöüß])/gi;
 // deduction wording of a sentence (prose arithmetic): a deduction word, or "1.190,00 EUR - 2 %" written as an operator
 const DED_SENT = /abzüglich|abzgl|abzug|skonto|rabatt|nachlass|discount|\bless\b|\bminus\b|deduct|kürz|gekürzt|minder|einbehalt|retain|withh|gebühr|spesen|charges|\bfees?\b|gutschrift(?!sbetrag|sanzeige| auf| erfolgt| wird)|credit note|\.\/\.|\d\s?(?:EUR|€|CHF|USD|GBP)?\s+[-–]\s+\d/i;
 // a sentence that states a payment (prose arithmetic), and one that only sets terms ("bei Zahlung bis", "zahlbar")
-const PROSE_PAY = /überwiesen|ueberwiesen|überweisen|ueberweisen|angewiesen|bezahlt|gezahlt|beglichen|begleichen|bezahlen|ausgeglichen|ausgleichen|gutgeschrieben|transferred|transferring|remitted|remitting|\bpaid\b|\bpaying\b|settled|credited|\bwe (?:pay|remit|transfer)\b|(?:zahlen|überweisen) wir\b|\bwir (?:zahlen|überweisen)\b|ha(?:s|ve) been made|w(?:as|ere) made|been effected|been executed|geleistet|vorgenommen|veranlasst|\breach(?:es)? (?:your|the) (?:bank )?account|\bgeht ihnen\b[^.]{0,60}\bzu\b|\bgehen ihnen\b[^.]{0,60}\bzu\b/i;
+const PROSE_PAY = /überwiesen|ueberwiesen|überweisen|ueberweisen|angewiesen|bezahlt|gezahlt|beglichen|begleichen|bezahlen|ausgeglichen|ausgleichen|gutgeschrieben|transferred|transferring|remitted|remitting|\bpaid\b|\bpaying\b|settled|credited|\bwe (?:pay|remit|transfer)\b|\bwired (?:you |us )?(?:the )?(?:funds|money|payment|amount|balance|eur|usd|gbp|chf|€|\$|£|\d)|\bsent (?:you )?(?:(?:a|an|the|our) )?(?:(?:wire|bank|telegraphic|electronic|international|sepa|swift|ach) )?(?:payment|transfer|wire|remittance)\b(?! (?:reminder|request|terms|plan|schedule|proposal|demand|notice|instructions|details|information))|(?:zahlen|überweisen) wir\b|\bwir (?:zahlen|überweisen)\b|ha(?:s|ve) been made|w(?:as|ere) made|been effected|been executed|geleistet|vorgenommen|veranlasst|\breach(?:es)? (?:your|the) (?:bank )?account|\bgeht ihnen\b[^.]{0,60}\bzu\b|\bgehen ihnen\b[^.]{0,60}\bzu\b/i;
 const TERMS = /bei zahlung (?:bis|innerhalb|binnen)|zahlbar|zahlungsziel|payable|if paid|when paid|if payment|bitte (?:überweisen|zahlen|begleichen)|please (?:pay|remit|transfer)|\bzu zahlen\b|\b(?:wenn|falls|sofern) sie\b[^.]{0,60}(?:überweisen|zahlen|bezahlen|begleichen|abziehen)|\b(?:können|dürfen|könnten) sie\b[^.]{0,80}(?:überweisen|zahlen|bezahlen|begleichen|abziehen)|\bsie (?:können|dürfen)\b[^.]{0,80}(?:überweisen|zahlen|bezahlen|begleichen|abziehen)|\byou (?:may|can|could) (?:deduct|pay|remit|transfer|settle)|\bif (?:you pay|settled|paid) (?:by|within|before)|\bshould you (?:pay|settle)|\bbei (?:überweisung|zahlungseingang|begleichung) (?:bis|innerhalb|binnen)|gewähren wir[^.]{0,30}skonto/i;
 // the reader is offered terms for paying (a supplier's letter or invoice): no advice when the writer states no payment
 const TERMS_YOU = /\b(?:wenn|falls|sofern) sie\b(?:[^.]|\.(?=\d)){0,60}(?:überweisen|zahlen|bezahlen|begleichen|abziehen)|\b(?:können|dürfen|könnten) sie\b(?:[^.]|\.(?=\d)){0,80}(?:überweisen|zahlen|bezahlen|begleichen|abziehen)|\bsie (?:können|dürfen)\b(?:[^.]|\.(?=\d)){0,80}(?:überweisen|zahlen|bezahlen|begleichen|abziehen)|\byou (?:may|can|could) (?:deduct|pay|remit|transfer|settle)|\bif (?:you pay|settled|paid) (?:by|within|before)|\bshould you (?:pay|settle)|\bbei (?:zahlung|überweisung|zahlungseingang|begleichung) (?:bis|innerhalb|binnen)|gewähren wir(?:[^.]|\.(?=\d)){0,30}skonto|skontofrist(?:[^.]|\.(?=\d)){0,40}(?:abgelaufen|überschritten|verstrichen)|zahlungsbedingungen|zahlungskonditionen|payment terms|terms of payment|innerhalb (?:von )?\d+ tagen(?:[^.]|\.(?=\d)){0,30}skonto|within \d+ days(?:[^.]|\.(?=\d)){0,30}discount|(?:is|are|remains?) (?:still )?outstanding|(?:ist|sind|bleibt|bleiben) (?:weiterhin |noch |damit )?offen\b/i;
@@ -6199,6 +6263,12 @@ const FUTURE_WHEN_G = /\b(?:am|zum|bis zum|bis|ab dem|ab) \d{1,2}\.\s?(?:januar|
 const MONTH_NAME = /(januar|january)|(februar|february)|(märz|maerz|march)|(april)|(mai|may)|(juni|june)|(juli|july)|(august)|(september)|(oktober|october)|(november)|(dezember|december)/i;
 // an alternative amount that is not paid ("den vollen Betrag von 2.000,00 EUR statt 1.960,00 EUR", "instead of EUR 1,960.00")
 const NOT_THIS = /(?:\bstatt|anstatt|anstelle von|instead of|rather than|\bnicht|\bnot)\s*(?:(?:der|den|des|von|of)\s+)?(?:(?:EUR|€|CHF|USD|GBP)\s*)?$/i;
+// a part or rest payment named right before its amount ("eine Teilzahlung in Höhe von 2.490,00", "die zweite Rate von
+// 500,00", "the first instalment of €4,880.00"; "rate" only with a German preposition, an English rate is a price)
+const PART_BEFORE = /\b(?:(?:teilzahlung|teilbetrag|abschlagszahlung|abschlag|anzahlung|restzahlung|restbetrag|schlusszahlung|schlussrate|instal(?:l)?ment|part(?:ial)? payment|down payment|final payment|balance payment|(?:remaining|outstanding) balance)\b[^.\d]{0,25}|rate\s+(?:von|über|in höhe von)\s*(?:EUR|€|CHF|USD|GBP)?\s*)$/i;
+// the invoice that payment is made on, as the whole text up to the invoice amount ("[2.490,00] EUR auf Ihre Rechnung Nr.
+// 4711 vom 14.09.2026 über [9.978,62]", "[€4,880.00] on your invoice no. 4711 dated 25/09/2026 for €[12,201.41]")
+const INVOICE_OF = /^\s*(?:EUR|€|CHF|USD|GBP)?\s*(?:(?:an sie|to you)\s+)?(?:auf|für|zu|zur|on|against|towards?|for|of)\s+(?:[A-Za-zÄÖÜäöüß]+\s+)?(?:rechnung|invoice)\b(?:[^.]|\.(?=\d)|\b(?:nr|no)\.){0,60}?\s(?:über|ueber|for|of|in höhe von|in the amount of|amounting to|totall?ing)\s*(?:EUR|€|CHF|USD|GBP)?\s*$/i;
 // a part payment of an open total ("Hiervon haben wir heute eine erste Rate von 2.000,00 EUR überwiesen")
 const PART_WORD = /\b(?:rate|raten|teilzahlung|teilbetrag|abschlag|abschlagszahlung|anzahlung|hiervon|davon|of this|of which|instal(?:l)?ments?|partial|part payment)\b/i;
 // a negated payment ("haben wir noch nicht überwiesen", "have not paid"): no payer statement
@@ -6236,7 +6306,7 @@ const FUTURE_WORD = /nächste|naechste|kommende|künftig|voraussichtlich|geplant
 // a section or page subtotal (not a carried-forward running total: "Übertrag" adds up all pages before)
 // an account balance line (bank statements and credit advices)
 const BALANCE_LINE = /kontostand|\bsaldo\b|\bbalance\b|\bsolde\b|\bsaldo (?:alt|neu|vor|nach)/i;
-const SUBTOTAL_LINE = /zwischensumme|teilsumme|zwischentotal|subtotal|sub-total|seitensumme|summe seite/i;
+const SUBTOTAL_LINE = /zwischensumme|teilsumme|zwischentotal|subtotal|sub-total|sub total|seitensumme|summe seite|page (?:sub-?)?total|total (?:for |of )?(?:this )?page\b/i;
 const INVOICE_HEAD = /^\s*(?:rechnung|rechnungskopie|kopie der rechnung|invoice|faktura)\b/i;
 const VAT_LINE = /zzgl|mwst|(?:^|[^a-zäöüß])ust(?![a-zäöüß])|umsatzsteuer|mehrwertsteuer|(?:^|[^a-z])(?:vat|tva|btw|iva|dph|moms|mva)(?![a-z])/i;
 const GROUP_MARK = "\u0001";
@@ -6375,12 +6445,13 @@ function detectEnglishFormat(lines: string[]): boolean {
 
 function findAmountsInLine(line: string, english: boolean): AmountMatch[] {
   // Amounts in the document's number format, then the unambiguous spellings of the other format ("2,456.47" in a German
-  // letter, "2.456,47" in an English one, a dot for the decimals "2.456.47"; a plain "2456.47" only next to a currency)
+  // letter, "2.456,47" in an English one, a dot for the decimals "2.456.47"; a plain "2456.47" only next to a currency);
+  // the English format includes the Indian lakh / crore grouping ("1,23,456.78")
   const out: AmountMatch[] = [];
   for (let pass = 0; pass < 2; pass++) {
     const re = pass === 0
-      ? (english ? /-?\d{1,3}(?:,\d{3})+\.\d{2}-?|-?\d+\.\d{2}-?/g : /-?\d{1,3}(?:\.\d{3})+,\d{2}-?|-?\d+,\d{2}-?/g)
-      : (english ? /-?\d{1,3}(?:\.\d{3})+,\d{2}-?|-?\d{1,3}(?:\.\d{3})+\.\d{2}-?|-?\d{3,},\d{2}-?/g : /-?\d{1,3}(?:,\d{3})+\.\d{2}-?|-?\d{1,3}(?:\.\d{3})+\.\d{2}-?|-?\d{3,}\.\d{2}-?/g);
+      ? (english ? /-?\d{1,2}(?:,\d{2})+,\d{3}\.\d{2}-?|-?\d{1,3}(?:,\d{3})+\.\d{2}-?|-?\d+\.\d{2}-?/g : /-?\d{1,3}(?:\.\d{3})+,\d{2}-?|-?\d+,\d{2}-?/g)
+      : (english ? /-?\d{1,3}(?:\.\d{3})+,\d{2}-?|-?\d{1,3}(?:\.\d{3})+\.\d{2}-?|-?\d{3,},\d{2}-?/g : /-?\d{1,2}(?:,\d{2})+,\d{3}\.\d{2}-?|-?\d{1,3}(?:,\d{3})+\.\d{2}-?|-?\d{1,3}(?:\.\d{3})+\.\d{2}-?|-?\d{3,}\.\d{2}-?/g);
     let m: RegExpExecArray | null;
     while ((m = re.exec(line)) !== null) {
       const start = m.index, end = start + m[0].length;
@@ -6403,6 +6474,9 @@ function findAmountsInLine(line: string, english: boolean): AmountMatch[] {
       const prep = /^\s?to\s+(?:your|the|our|their|you|us|account|acct|iban|bank|beneficiary|supplier|vendor)\b/i.test(line.substring(end, end + 30)) || (english && /^\s?to [a-z]/.test(unit));
       if ((UNIT_AFTER.test(unit) && !prep) || UNIT_AFTER_H.test(unit)) continue;
       if (CAPITAL_BEFORE.test(line.substring(Math.max(0, start - 50), start))) continue;
+      // the lakh grouping is read for amounts in a foreign currency ("EUR 1,58,733.72"); rupee amounts ("INR 23,85,390.00",
+      // the debit of an Indian bank) stay unread as before: never the payment to a European supplier
+      if (/^-?\d{1,2}(?:,\d{2})+,\d{3}\./.test(m[0]) && (/(?:\bINR|\bRs\.?|₹)\s*$/.test(line.substring(Math.max(0, start - 8), start)) || /^\s*(?:INR\b|₹)/.test(line.substring(end, end + 8)))) continue;
       const dotDot = /^-?\d{1,3}(?:\.\d{3})+\.\d{2}-?$/.test(m[0]);
       const eng = pass === 0 ? english : !english;
       let value = dotDot ? parseEnglishAmount(m[0].replace(/\.(?=\d{3}\.)/g, "")) : eng ? parseEnglishAmount(m[0]) : parseGermanAmount(m[0]);
@@ -6459,7 +6533,7 @@ function headerCellClass(cell: string): string {
   if (/datum|date|fecha|\bdata\b|nr\b|nr\.|nummer|number|no\.|n°|währung|waehrung|currency|devise|kurs|text|bezeichnung|artikel|material|referenz|reference|référence|riferimento|referencia|gewicht|menge|einheit|^pos/.test(c)) return "id";
   // an earlier payment ("bereits gezahlt", "previously paid") is no payment column
   if (/bereits|already|previously|prior|bisher|déjà|reeds|già|\bya\b|již|już|allerede|redan/.test(c)) return "prev";
-  if (/rest|offen|open|outstanding|balance|saldo|solde|resto|pendiente|zbývá|pozostał/.test(c)) return "rest";
+  if (/rest|offen|open|outstanding|balance|\bowing\b|\bowed\b|remaining|unpaid|saldo|solde|resto|pendiente|zbývá|pozostał/.test(c)) return "rest";
   if (/skonto|abzug|discount|einbehalt|rabatt|deduction|gutschrift|delkredere|bonus|provision|gebühr|\bfees?\b|commission|aufrechn|verrechn|korting|escompte|remise|sconto|descuento|rabat|sleva|retenue|ritenuta|retención|withholding|bauabzug/.test(c)) return "ded";
   if (/ust\b|ust\.|mwst|vat\b|steuer|tax|btw|tva|\biva\b|dph/.test(c)) return "vat";
   if (/zahlbetrag|zahlungsbetrag|zahlung|gezahlt|bezahlt|überw|ueberw|auszahl|paid|payment|remit|betaald|betaling|réglé|payé|paiement|virement|pagato|pagamento|bonifico|pagado|\bpago\b|transferencia|płatno|zapłac|kwota zapłaty|przelew|uhrazen|platba|úhrad|betalt|betalning/.test(c)) return "pay";
@@ -6906,12 +6980,12 @@ function distinctMatches(re: RegExp, s: string): number {
 // fields). quoteStart: first line of the quoted mail in an e-mail reply
 // (lines.length if none); payer: the writer states a payment; foreignPayer: payer and no open amount (foreign payment
 // words then count as payment wording); ownText: the text before the quoted mail; payerDone: the writer states a payment
-// that is done (or made today).
-interface DocInfo { kind: string; why: string; cited: string; transferForm: boolean; bankCredit: boolean; quoteStart: number; payer: boolean; foreignPayer: boolean; ownText: string; payerDone: boolean }
+// that is done (or made today); title: the stand-alone title line (PAYER_DOC_TITLE) that made the document an advice.
+interface DocInfo { kind: string; why: string; cited: string; transferForm: boolean; bankCredit: boolean; quoteStart: number; payer: boolean; foreignPayer: boolean; ownText: string; payerDone: boolean; title: string }
 
 function classifyDocument(infos: LineInfo[], heights: number[] | null): DocInfo {
   const n = infos.length;
-  const doc: DocInfo = { kind: "", why: "", cited: "", transferForm: false, bankCredit: false, quoteStart: n, payer: false, foreignPayer: false, ownText: "", payerDone: false };
+  const doc: DocInfo = { kind: "", why: "", cited: "", transferForm: false, bankCredit: false, quoteStart: n, payer: false, foreignPayer: false, ownText: "", payerDone: false, title: "" };
   // e-mail printout: a header block near the top; a later "Von:" block or "Am ... schrieb" starts the quoted mail
   // (the first block of header lines; one other line in between is allowed)
   let headers = 0, lastHeader = -1;
@@ -6975,7 +7049,7 @@ function classifyDocument(infos: LineInfo[], heights: number[] | null): DocInfo 
   }
   // otherWeak: otherT is only an invoice or order number line ("Rechnung Nr. 2026-551", "DUPLIKAT") or a cited
   // document outside a stand-alone title ("Lieferschein-Nr.", subject "Lieferschein 80012345")
-  let adviceT = false, transferT = false, creditT = false, creditAdvT = false, otherT = "", otherWeak = false;
+  let adviceT = false, transferT = false, creditT = false, creditAdvT = false, debitT = false, otherT = "", otherWeak = false, payerDocT = "";
   // recipient address block: up to four short lines right above a "12345 Stadt" line (left column only)
   const addrLine: boolean[] = [];
   for (let i = 0; i < n; i++) addrLine.push(false);
@@ -7029,6 +7103,9 @@ function classifyDocument(infos: LineInfo[], heights: number[] | null): DocInfo 
       // (a mail subject "Rechnung 2026-551" refers to the invoice)
       const alone = !subject && !section && (cells.length === 2 || large.indexOf(i) >= 0);
       if (alone && CREDIT_TITLE.test(cell)) creditT = true;
+      if (alone && payerDocT === "" && PAYER_DOC_TITLE.test(cell)) payerDocT = cell.replace(/\s*:$/, "");
+      if (alone && BILL_PAYMENT_TITLE.test(cell)) adviceT = true;
+      if (alone && DEBIT_TITLE.test(cell)) debitT = true;
       if ((otherT !== "" && !otherWeak) || reply) continue;
       const m = OTHER_TITLE.exec(cell);
       if (m !== null && !REF_BEFORE.test(cell.substring(0, m.index))) {
@@ -7040,6 +7117,8 @@ function classifyDocument(infos: LineInfo[], heights: number[] | null): DocInfo 
     }
   }
   const bank = distinctMatches(BANK_FIELD, own) >= 2;
+  let letter = false;
+  for (let i = 0; i < doc.quoteStart && !letter; i++) if (SALUTATION.test(infos[i].text)) letter = true;
   // the advice naming itself is removed first; dots in numbers, dates and abbreviations do not end a sentence here
   const plain = (ownSubject + "\n" + own).replace(SELF_ADVICE, " ").replace(REQUEST_REF, " ").replace(/(\d)\.(?=\d)/g, "$1").replace(ABBREV_PAIR, "$1$2").replace(ABBREV_DOT, "$1");
   if (REQUEST_ADVICE.test(plain)) { doc.kind = "other"; doc.why = "asks for a payment advice - not an advice itself"; return doc; }
@@ -7063,10 +7142,12 @@ function classifyDocument(infos: LineInfo[], heights: number[] | null): DocInfo 
       if (who.length >= 2 && who[0] === head[0] && who[1] === head[1]) { doc.kind = "other"; doc.why = "'" + om[1].trim() + "' - not a payment advice?"; return doc; }
     }
   }
+  const single = own.replace(ADVICE_PLURAL, " ");
   if (adviceT) doc.kind = "advice";
   else if (transferT && bank && (otherT === "" || ORDER_CONFIRM.test(otherT))) doc.kind = "advice";
   else if (creditT && bank) doc.kind = "advice";
   else if (creditT) { doc.kind = "other"; doc.why = "credit note title - not a payment advice?"; }
+  else if (debitT) { doc.kind = "other"; doc.why = "debit note title - not a payment advice?"; }
   // an invoice / order number line or a cited document in a payer's letter ("wir haben ... überwiesen") is a reference
   else if (otherT !== "" && !(otherWeak && payerDone)) { doc.kind = "other"; doc.why = "'" + otherT + "' - not a payment advice?"; }
   else if (otherT !== "" && otherWeak && payerDone && !adviceT && /lieferschein|delivery note/i.test(otherT)) doc.cited = otherT;
@@ -7076,7 +7157,8 @@ function classifyDocument(infos: LineInfo[], heights: number[] | null): DocInfo 
   else if (!payerDone && !creditAdvT && (YOU_PAID.test(plain) || YOU_PAID_EN.test(plain))) { doc.kind = "other"; doc.why = "payee's letter about a received payment - not a payment advice?"; }
   // a bank's credit advice in another wording ("Credit advice" with value date and ordering customer)
   else if (creditAdvT && bank) doc.kind = "advice";
-  else if (AVIS_TITLE.test(own) && (DE_EN_AVIS_TITLE.test(own) || foreignTitleOk)) doc.kind = "advice";
+  // the advice title anywhere in the text (not in the plural: "send remittance advices to ...")
+  else if (AVIS_TITLE.test(single) && (DE_EN_AVIS_TITLE.test(single) || foreignTitleOk)) doc.kind = "advice";
   else {
     let m = NO_PAYMENT.exec(own);
     if (m === null) m = DEMAND.exec(own);
@@ -7095,6 +7177,7 @@ function classifyDocument(infos: LineInfo[], heights: number[] | null): DocInfo 
     else if (distinctMatches(PAYROLL_WORD, own) >= 2) { doc.kind = "other"; doc.why = "payroll words - not a payment advice?"; }
     else if (distinctMatches(EXPENSE_WORD, own) >= 2) { doc.kind = "other"; doc.why = "travel expense words - not a payment advice?"; }
     else if (distinctMatches(SHIPPING_WORD, own) >= 3) { doc.kind = "other"; doc.why = "shipping words - not a payment advice?"; }
+    else if (payerDocT !== "" && !letter && PAYMENT_MARKER.test(own) && !openAmount && !FUTURE_SENT.test(own) && !NOT_YET.test(own) && !READER_PAID.test(own) && !(/^avis/i.test(payerDocT) && DELIVERY_WORD.test(own))) { doc.kind = "advice"; doc.title = payerDocT; }
   }
   doc.transferForm = doc.kind === "advice" && transferT && bank;
   doc.bankCredit = doc.kind === "advice" && bank && (creditT || creditAdvT);
@@ -7173,7 +7256,10 @@ function proseRules(infos: LineInfo[], sents: ProseSent[], pairs: number[], unse
   // (3) the total of the invoice amounts in one payment sentence ("über 1.190,00 EUR und über 2.264,00 EUR insgesamt
   //     3.454,00 EUR") is the payment;
   // (4) a payment sentence with a deduction word and several amounts that the arithmetic does not settle: its amounts go to
-  //     unsettled (manual check); the amount after a result word ("also", "=") is proposed.
+  //     unsettled (manual check); the amount after a result word ("also", "=") is proposed;
+  // (5) a part or rest payment and the invoice it is made on in one payment sentence ("haben wir heute eine Teilzahlung in
+  //     Höhe von 2.490,00 EUR auf Ihre Rechnung ... über 9.978,62 EUR überwiesen"): the part is the payment, the invoice
+  //     amount is none, also when the verb follows it.
   // pairs receives (payment, gross or part) values.
   const pay: boolean[] = [];
   for (const st of sents) { const f = st.text.replace(/(\d)\.(?=\d)/g, "$1"); pay.push(PROSE_PAY.test(f) && !TERMS.test(f)); }
@@ -7203,6 +7289,24 @@ function proseRules(infos: LineInfo[], sents: ProseSent[], pairs: number[], unse
         const pi = posts[m].search(POST_PAYMENT);
         const stop = posts[m].search(POST_STOP);
         if (pi >= 0 && (stop < 0 || pi < stop) && !NOT_YET.test(posts[m])) { lab.payment = true; lab.strong = true; }
+      }
+    }
+    // (5)
+    if (!pay[si]) continue;
+    for (let m = 1; m < n; m++) {
+      const inf = infos[st.li[m]];
+      const lab = inf.labels[st.aj[m]];
+      const b = inf.amounts[st.aj[m]].value;
+      if (!lab.payment || inf.cols[st.aj[m]] !== "" || !INVOICE_OF.test(segs[m]) || REST_WORD.test(segs[m])) continue;
+      for (let p = 0; p < m; p++) {
+        const pl = infos[st.li[p]].labels[st.aj[p]];
+        const a = infos[st.li[p]].amounts[st.aj[p]].value;
+        if (pl.ded || a <= 0 || a >= b - 0.005 || infos[st.li[p]].cols[st.aj[p]] !== "" || !PART_BEFORE.test(segs[p])) continue;
+        lab.payment = false; lab.strong = false; lab.neg = true;
+        pl.payment = true; pl.strong = true;
+        pairs.push(a);
+        pairs.push(b);
+        break;
       }
     }
   }
@@ -7416,7 +7520,7 @@ function proseRules(infos: LineInfo[], sents: ProseSent[], pairs: number[], unse
 
 function documentDay(infos: LineInfo[]): number {
   // Day number (y * 372 + m * 31 + d) of the document date in the first 40 lines ("Datum 29.10.2026", "Herford,
-  // 30.10.2026", "Gesendet: Donnerstag, 29. Oktober 2026"), 0 if none.
+  // 30.10.2026", "Gesendet: Donnerstag, 29. Oktober 2026", "Date: 29 October 2026"), 0 if none.
   const months = ["januar", "februar", "märz", "april", "mai", "juni", "juli", "august", "september", "oktober", "november", "dezember"];
   for (let i = 0; i < infos.length && i < 40; i++) {
     const t = infos[i].text;
@@ -7425,6 +7529,10 @@ function documentDay(infos: LineInfo[]): number {
     if (m !== null) return parseInt(m[3], 10) * 372 + parseInt(m[2], 10) * 31 + parseInt(m[1], 10);
     const w = /\b(?:datum|date|gesendet|sent)\b[^0-9]{0,30}?(\d{1,2})\.\s*(januar|februar|märz|april|mai|juni|juli|august|september|oktober|november|dezember)\s+(\d{4})\b/i.exec(t);
     if (w !== null) return parseInt(w[3], 10) * 372 + (months.indexOf(w[2].toLowerCase()) + 1) * 31 + parseInt(w[1], 10);
+    // English with the day first ("Date: 29 October 2026", "Sent: Friday, 23 October 2026"; not "Invoice date ...");
+    // a month first ("October 28, 2026") is American, whose numeric dates laterDate() would read the wrong way round
+    const e = /(?:^|\s{2,})(?:date|sent)\s*:?\s*(?:[A-Za-z]+,\s*)?(\d{1,2})(?:st|nd|rd|th)?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{4})\b/i.exec(t);
+    if (e !== null) return parseInt(e[3], 10) * 372 + ("janfebmaraprmayjunjulaugsepoctnovdec".indexOf(e[2].toLowerCase()) / 3 + 1) * 31 + parseInt(e[1], 10);
   }
   return 0;
 }
@@ -7732,10 +7840,18 @@ function pickAmount(lines: string[], extraKeywords: string): AmountPick {
     }
   }
   if (doc.transferForm) {
-    // "Betrag 1.850,00 EUR" in the payer bank's transfer confirmation is the transferred amount
+    // "Betrag 1.850,00 EUR" in the payer bank's transfer confirmation is the transferred amount; beside it, the debit of
+    // the payer's account ("Total debit", "Belastungsbetrag": with fees or in the account currency) is no total of it
+    let field = false;
     for (const inf of infos) {
       if (inf.amounts.length !== 1 || inf.quoted) continue;
-      if (TRANSFER_FIELD.test(inf.text.substring(0, inf.amounts[0].index).trim())) { inf.labels[0].strong = true; inf.labels[0].payment = true; inf.labels[0].weak = true; }
+      if (TRANSFER_FIELD.test(inf.text.substring(0, inf.amounts[0].index).trim())) { inf.labels[0].strong = true; inf.labels[0].payment = true; inf.labels[0].weak = true; field = true; }
+    }
+    for (const inf of infos) {
+      if (!field || inf.amounts.length !== 1 || inf.quoted || !DEBIT_TOTAL.test(inf.text.substring(0, inf.amounts[0].index))) continue;
+      inf.labels[0].strong = false;
+      inf.labels[0].payment = false;
+      inf.labels[0].neg = true;
     }
   }
   if (doc.bankCredit) {
@@ -8112,6 +8228,38 @@ function pickAmount(lines: string[], extraKeywords: string): AmountPick {
         promoted = xcT;
       }
     }
+    // the same with a total row of the table: page or section subtotals ("Page total ... 23,762.55", "Seitensumme") and a
+    // later total in the same column that is exactly their sum ("Payment total (EUR) ... 35,271.53"), with no other
+    // payment amount after it
+    if (promoted === null && all.length > 0 && !all[0].copy && SUBTOTAL_LINE.test(all[0].line)) {
+      const top = all[0];
+      let subSum = 0, lastSub = -1;
+      const subLines = new Set<number>();
+      for (const c of all) {
+        if (c.col !== top.col || c.copy || subLines.has(c.lineIdx) || !SUBTOTAL_LINE.test(c.line)) continue;
+        subLines.add(c.lineIdx);
+        subSum += c.value;
+        if (c.lineIdx > lastSub) lastSub = c.lineIdx;
+      }
+      let tot: Candidate | null = null;
+      if (subLines.size >= 2) {
+        for (const c of all) {
+          if (c.copy || c.col !== top.col || c.lineIdx <= lastSub || !c.label.strong || c.label.neg || SUBTOTAL_LINE.test(c.line) || Math.abs(c.value - subSum) >= 0.015 || FUTURE_WORD.test(labelOf(c, infos))) continue;
+          tot = c;
+          break;
+        }
+      }
+      let laterPay = false;
+      if (tot !== null) {
+        const tl = tot.lineIdx, tv = tot.value;
+        for (const c of all) if (c.lineIdx > tl && c.label.payment && !c.label.neg && !c.copy && Math.abs(c.value - tv) >= 0.005) laterPay = true;
+      }
+      if (tot !== null && !laterPay) {
+        all.splice(all.indexOf(tot), 1);
+        all.unshift(tot);
+        promoted = tot;
+      }
+    }
   }
   // (e) the chosen total is not a payment, but a payment-worded line names a different amount:
   // uncertain; suggest that payment when it is the only one and looks like the total minus deductions
@@ -8471,8 +8619,9 @@ const PAYER_LONG = /\b(?:wurde|wurden|wird|werden)\b[^.!?]{0,160}(?:überwiesen|
 // a negated or missing payment inside a payer phrase ("haben wir noch keine Zahlung veranlasst")
 const PAYER_NEGATED = /\b(?:nicht|kein(?:e|en|em|er)?|noch nie|not|no|never)\b/i;
 // a payer phrase in a question or a condition ("wurde die Rechnung schon bezahlt?", "falls bereits überwiesen", "could
-// you confirm whether ... has been paid") states no payment
-const PAYER_COND = /\b(?:ob|falls|sofern|sobald|wenn|whether|if|once)\b|as soon as/i;
+// you confirm whether ... has been paid", "in case the invoice was paid in the meantime", the reminder's "should payment
+// have been made ...") states no payment
+const PAYER_COND = /\b(?:ob|falls|sofern|sobald|wenn|whether|if|once|unless)\b|as soon as|\bin case\b(?! of\b)|\bin the event\b(?! of\b)|\bshould (?:[a-z]+ ){0,4}?have been\b/i;
 // money credited that is no payment for an invoice: bonus, loyalty points, voucher, interest ("Ihr Treuebonus wird Ihrem
 // Kundenkonto gutgeschrieben", "wurden Ihnen 250 Punkte gutgeschrieben", "Zinsen ... gutgeschrieben")
 const BONUS_CREDIT = /kundenkonto|kundenkarte|punkte|bonus|treue|gutschein|zinsen|zinsgutschrift|tagesgeld|sparkonto|cashback|prämie|praemie|loyalty|points|voucher|interest/i;
@@ -8487,7 +8636,7 @@ const ITEM_HEAD_CELL = /^(?:pos\.?|position|pos\.?-?nr\.?|menge|anzahl|einzelpre
 const VAT_AMOUNT_LINE = /(?:^|\s)(?:ust|mwst|umsatzsteuer|mehrwertsteuer|vat|zzgl\.?)(?:\s|\.|$)(?![^\n]{0,4}(?:id|nr|ident))/i;
 const VAT_NOTE = /§\s*19\s*ustg|kleinunternehmer|steuerschuldnerschaft des leistungsempfängers|reverse.charge/i;
 const RECEIPT_WORD = /bezahlt (?:mit|per) (?:girocard|ec|karte|kreditkarte|bar|maestro|visa|mastercard)|\bgirocard\b|ec-?karte|kartenzahlung|rückgeld|rueckgeld|wechselgeld|vielen dank für ihren (?:einkauf|besuch)|kassenbon|kassenbeleg|\bbon-?nr|tse-?(?:signatur|transaktion)|terminal-?id|kraftstoff|zapfsäule/i;
-const AMBIGUOUS_PAY_LABEL = /'(?:zahlbetrag|zahlungsbetrag|zahlungssumme|gesamtzahlung|betrag der zahlung|payment amount)'/i;
+const AMBIGUOUS_PAY_LABEL = /'(?:zahlbetrag|zahlungsbetrag|zahlungssumme|gesamtzahlung|betrag der zahlung|payment amount|payment value)'/i;
 // a payment announced under a condition or for after an event ("sobald freigegeben", "nach Prüfung", "once approved"); a
 // date or "in den nächsten Tagen" only schedules it
 const POSTPONE_COND = /\bsobald\b|\bnach (?:klärung|eingang|prüfung|erhalt|abschluss|behebung|austausch|abnahme|freigabe|lieferung|wareneingang|fertigstellung|montage|inbetriebnahme|vorlage|zugang|korrektur|genehmigung)|\bonce\b|\bupon\b|\bafter (?:the )?(?:goods|delivery|acceptance|approval|receipt|inspection|arrival|correction)|\bbeabsichtigen\b|\bintend to\b|\bvorbehaltlich\b|subject to (?:approval|receipt|release)/i;
@@ -8497,6 +8646,25 @@ const TRANSFER_ORDER_FIELDS = [/(?:^|\n)\s*(?:auftraggeber|kontoinhaber)(?![a-z�
 const REPORT_TITLE = /^(?:leistungsnachweis|stundennachweis|arbeitsnachweis|stundenzettel|tätigkeitsnachweis|regiebericht|servicebericht|kostenvoranschlag|proforma|pro-forma|timesheet|service report)\b/i;
 // payment words of more languages and German payment orders ("zur Zahlung angewiesen"): only a weak signal (unclear)
 const WEAK_PAY_WORD = /anweisung|angewiesen|átutal|fizetés|kifizet|utalás|ödeme|havale|ödendi|ödenmiştir|plată|plata\b|plačil|uplat|isplat|plaćan|maksu|maksettu|platb|úhrad|betaling|betalning|remit/i;
+// invoices or money that "went out" in colloquial words ("die Rechnungen ... sind heute raus", "invoices ... went out
+// today"): paid, or only sent to the customer? Beside an amount a weak signal (unclear), never an advice of its own
+const SENT_OUT = /(?:rechnung(?:en)?|zahlung(?:en)?|überweisung(?:en)?|ueberweisung(?:en)?|(?:^|[^a-zäöüß])(?:geld|betrag)|\binvoices?|\bpayments?|\btransfers?|\bmoney|\bfunds)\b[^.!?\n]{0,120}?\b(?:(?:ist|sind) (?:(?:heute|gestern|jetzt|eben|soeben|gerade|bereits|schon|nun|alle|beide) )*raus(?:gegangen)?\b(?! ?aus\b)|(?:went|has gone|have gone) out\b(?! of\b))/i;
+// topics of a document without advice evidence whose payment words are only an aside (asideTopic): an information letter
+// without any amount (new address, company name or contact person, holiday opening hours, "please update the following
+// bank details"), a payment put on hold without any amount ("Payment of invoice RE-4711 is on hold until ..."), a
+// request to confirm the balance of a statement of account or an open-items list (only beside reconciliation words), a
+// request for a better price or a further discount
+const INFO_LETTER = /change of (?:company |business |legal |postal |registered )?(?:name|address)|(?:address|name) change|new (?:postal |business |company |office |head office |registered )?address|we(?:['’]re| are) (?:moving|relocating)|we have (?:moved|relocated)|(?:changed|changes|will change) (?:its|our) (?:company |business |legal )?name|new (?:company |business |legal |trading )?name|(?:has|have) taken over (?:the |my |his |her )?(?:[a-z-]+ ){0,3}(?:function|role|position|responsibilit(?:y|ies)|duties)|update (?:your |our |the following )?(?:[a-z-]+ ){0,2}(?:bank(?:ing)? (?:account )?details|contact details|address)|(?:christmas|holiday|festive|new year)[^.\n]{0,40}(?:opening|office|business) hours|(?:opening|office|business) hours (?:over|during|for|between) (?:the )?(?:christmas|holiday|festive|new year)|adressänderung|anschriftänderung|anschriftenänderung|neuen? (?:anschrift|adresse|postanschrift|firmenanschrift)|wir ziehen um|umfirmierung|umfirmiert|namensänderung|neuer? (?:firmenname|firmierung)|neue[rn]? ansprechpartner|(?:ab sofort|künftig|zukünftig)[^.]{0,60}ansprechpartner|(?:aufgaben|zuständigkeit|betreuung)[^.]{0,40}übernommen|übernimmt[^.]{0,40}(?:aufgaben|zuständigkeit|betreuung)|(?:aktualisieren|ändern|passen|übernehmen|hinterlegen) sie[^.]{0,60}(?:stammdaten|bankverbindung|anschrift|adresse)|(?:weihnachts|feiertags|ferien)[^.\n]{0,20}öffnungszeiten|öffnungszeiten (?:zwischen|über|an|während) (?:den )?(?:feiertag|weihnacht|jahreswechsel)/i;
+const PAYMENT_ON_HOLD = /payment(?: (?:of|for) [^.]{1,40}?)? (?:is|has been|will be|remains) (?:put |placed )?(?:on hold|withheld|suspended|blocked)|\bzahlung(?:en)?\b[^.]{0,60}(?:ausgesetzt|zurückgehalten|zurückbehalten|gesperrt)/i;
+const BALANCE_REQUEST = /confirm (?:the|this|our|your) (?:closing |current |account )?balance\b|balance confirmation|(?:bestätigen|bestaetigen) sie (?:uns )?(?:bitte )?(?:den|diesen|unseren|ihren) saldo|saldenbestätigung|saldenbestaetigung/i;
+const BALANCE_CONTEXT = /reconcil|(?:sales|purchase) ledger|abstimm|abgleich|gleichen wir|offene[nr]? posten|stichtag|monatsabschluss|jahresabschluss/i;
+const PRICE_REQUEST = /discount (?:that )?you (?:could|can) offer|(?:could|can) you offer (?:us )?(?:a |any )?(?:further |better |lower )?(?:discount|price)|(?:is there|would there be) (?:any |a )?(?:further |additional )?discount|(?:rabatt|preisnachlass|nachlass) möglich|(?:können|könnten) sie (?:uns )?(?:noch )?(?:einen |ein )?(?:besseren preis|besseres angebot|weiteren rabatt)/i;
+// an invoice named by its number ("invoice 4711", "Rechnung Nr. 2026-0917", "INV-4711", "RE-2026-0917"): payment words
+// beside it concern that invoice, not another topic
+const INVOICE_NO = /\b(?:invoices?|inv|rechnung(?:en)?|rechnungsnummer|rechnungs-?nr)\b\.?\s*(?:no\.?|nr\.?|number|nummer|#)?\s*:?\s*[A-Z]{0,4}[-\/ ]?\d{3,}|\bre-\d{3,}/i;
+// a single payment of the writer ("the payment will be made on ...", "our payment of", "die Überweisung ist heute raus"):
+// then the text is a payment notice, not another topic
+const SPECIFIC_PAYMENT = /\b(?:the|our|this|my) (?:payment|transfer|remittance)\b(?! (?:run|terms|queries|query|details|process|method|instructions|address))|\bpayment (?:will be|has been|was|is being|is) (?:made|sent|released|transferred|initiated|executed)|\b(?:die|unsere|diese|meine) (?:zahlung|überweisung|ueberweisung)\b|(?:^|[^a-zäöüß])(?:zahlung|überweisung|ueberweisung) (?:ist|wurde|wird)\b/i;
 
 function shortQuote(s: string): string {
   // a matched phrase for a reason text: one line, at most 60 characters
@@ -8562,7 +8730,7 @@ function negativeSignal(infos: LineInfo[], doc: DocInfo, strong: boolean, payer:
   const text = sents.join("\n").replace(/(\d)\.(?=\d)/g, "$1");
   const m = NEG_SENT.exec(text);
   if (m !== null) return negativeLabel(m[0]) + " ('" + shortQuote(m[0]) + "')";
-  if (!payer && doc.kind !== "advice") {
+  if (!payer && (doc.kind !== "advice" || doc.title !== "")) {
     const w = WITHHELD.exec(all.join("\n"));
     if (w !== null) return "payment withheld ('" + shortQuote(w[0]) + "')";
   }
@@ -8627,10 +8795,12 @@ function adviceEvidence(infos: LineInfo[], doc: DocInfo, best: Candidate | null)
   const own = doc.ownText;
   const ev: AdviceEvidence = { positive: "", strong: false, negative: "", payWord: false, hint: "", payer: doc.payer || doc.payerDone, kind: "", invoice: [], postponed: "" };
   ev.payWord = PAYMENT_MARKER.test(own.replace(PAYOUT_NOT_MADE, " ")) || FOREIGN_PAYMENT_MARKER.test(own) || WEAK_PAY_WORD.test(own) || VALUE_DATE_PAY.test(own);
-  ev.hint = adviceHint(own);
+  ev.hint = adviceHint(own.replace(ADVICE_PLURAL, " "));
   // a payer statement, also across amounts and abbreviations ("haben wir heute mit 4.233,02 € überwiesen"); not negated,
   // no question, no condition, no bonus or interest credit
   const plain = own.replace(/(\d)\.(?=\d)/g, "$1").replace(ABBREV_PAIR, "$1$2").replace(ABBREV_DOT, "$1").replace(NOT_PAID_G, " ");
+  // "die Rechnungen ... (zusammen 3.724,42 €) sind heute raus": paid or sent? Only with an amount, then for a human check
+  if (!ev.payWord && best !== null && SENT_OUT.test(plain)) ev.payWord = true;
   const rej: boolean[] = [false];
   let done = payerFind(PAYER_DONE, plain, rej);
   if (done === null || PAYER_NEGATED.test(done[0])) done = payerFind(PAYER_LONG_DONE, plain, rej);
@@ -8669,7 +8839,7 @@ function adviceEvidence(infos: LineInfo[], doc: DocInfo, best: Candidate | null)
         all = head.join("\n");
       }
       const m = AVIS_TITLE.exec(all);
-      ev.positive = m !== null ? "advice title '" + all.substring(m.index, m.index + m[0].length) + "'" : "advice document";
+      ev.positive = m !== null ? "advice title '" + all.substring(m.index, m.index + m[0].length) + "'" : doc.title !== "" ? "advice title '" + doc.title + "'" : "advice document";
       ev.kind = "title";
     }
   } else if (doc.kind !== "other") {
@@ -8699,7 +8869,10 @@ function adviceEvidence(infos: LineInfo[], doc: DocInfo, best: Candidate | null)
     if (ev.kind === "label" && AMBIGUOUS_PAY_LABEL.test(ev.positive)) ev.invoice = invoiceFeatures(infos, doc);
     else if (ev.kind === "table") ev.invoice = invoiceFeatures(infos, doc).filter((f) => f !== "VAT line" && f !== "VAT note");
   }
-  ev.negative = negativeSignal(infos, doc, ev.strong, ev.payer);
+  // a bank transfer form or a form with a stand-alone title like "REMITTANCE" is strong evidence, but its text is checked
+  // like a letter: a supplier's letter with transfer instructions ("Wire transfer instructions", beneficiary and payee
+  // fields) announces new bank details, no payment
+  ev.negative = negativeSignal(infos, doc, ev.strong && !doc.transferForm && doc.title === "", ev.payer);
   return ev;
 }
 
@@ -8739,8 +8912,30 @@ function judgeDocument(pick: AmountPick, hasAmount: boolean, reply: boolean): Do
     if (pick.best !== null && pick.best.value <= 0) return { verdict: "unclear", why: ev.positive + ", but the amount is not positive" };
     return { verdict: "advice", why: ev.positive };
   }
+  // payment words that are only an aside of another topic (no advice word, no payer statement)
+  if (ev.payWord && ev.hint === "" && !ev.payer) {
+    const topic = asideTopic(doc.ownText, hasAmount);
+    if (topic !== "") return { verdict: "other", why: topic };
+  }
   if (ev.payWord || ev.hint !== "") return { verdict: "unclear", why: hasAmount ? "payment wording, but no advice evidence" : (ev.hint !== "" ? "advice word '" + ev.hint + "', but no amount" : "payment wording, but no amount") };
   return { verdict: "other", why: "amount without payment wording" };
+}
+
+function asideTopic(own: string, hasAmount: boolean): string {
+  // the topic of a text without advice evidence whose payment words are only an aside ("" = none): a payment put on hold
+  // (without any amount); when neither an invoice number nor a single payment of the writer is named also a request for
+  // a better price, a balance confirmation request beside reconciliation words or (without any amount) an information
+  // letter. Line breaks count as spaces (a phrase wrapped in a PDF line)
+  const t = own.replace(/\s+/g, " ");
+  const hm = hasAmount ? null : PAYMENT_ON_HOLD.exec(t);
+  if (hm !== null) return "payment withheld ('" + shortQuote(hm[0]) + "')";
+  if (INVOICE_NO.test(t) || SPECIFIC_PAYMENT.test(t)) return "";
+  const pm = PRICE_REQUEST.exec(t);
+  if (pm !== null) return "price negotiation ('" + shortQuote(pm[0]) + "')";
+  const bm = BALANCE_CONTEXT.test(t) ? BALANCE_REQUEST.exec(t) : null;
+  if (bm !== null) return "balance confirmation request ('" + shortQuote(bm[0]) + "')";
+  const im = hasAmount ? null : INFO_LETTER.exec(t);
+  return im !== null ? "information letter ('" + shortQuote(im[0]) + "')" : "";
 }
 
 // ---------------------------------------------------------------------
@@ -8751,12 +8946,14 @@ const RESULT_TEXT_CHARS = 20000; // text in the result (run history of the flow)
 const MAX_DOCS = 30;             // PDFs and other attachments read per mail (the mail text is always read)
 // file name of an advice inside a mail container (preferred over the other PDFs of the mail)
 const ADVICE_FILE_NAME = /zahlungsavis|überweisungsavis|ueberweisungsavis|payment.?advice|remittance|(?:^|[^a-zäöüß])avis(?:[^a-zäöüß]|$)/i;
-// a subject the flow already extended (" - 2.601,35 EUR", " - 2.601,35 EUR (prüfen)", " - 2.601,35 EUR ?")
-const BOT_SUFFIX = / - -?\d{1,3}(?:\.\d{3})*,\d{2} [A-Z]{3}(?: \(prüfen\)| \?)?\s*$/;
+// the amount behind a subject, as versions before 31.10.2026 wrote it (" - 2.601,35 EUR", " - 2.601,35 EUR (prüfen)",
+// " - 2.601,35 EUR ?"); group 1 = amount and currency
+const BOT_SUFFIX = / - (-?\d{1,3}(?:\.\d{3})*,\d{2} [A-Z]{3})(?: \(prüfen\)| \?)?\s*$/;
 // stands for a mail without a subject in the subject fields
 const NO_SUBJECT = "(Kein Betreff)";
-// the amount in front of a subject (also after reply and forward prefixes "AW: 2.601,35 EUR - Zahlungsavis"): the flow ran before
-const BOT_PREFIX = /^\s*(?:(?:aw|re|wg|fw|fwd|antw|tr|wtr|sv|vs)\s*:\s*)*-?\d{1,3}(?:\.\d{3})*,\d{2} [A-Z]{3}(?: \(prüfen\)| \?)?(?: - |\s*$)/i;
+// the amount in front of a subject (also after reply and forward prefixes "AW: 2.601,35 EUR - Zahlungsavis"): the flow ran
+// before; group 1 = amount and currency
+const BOT_PREFIX = /^\s*(?:(?:aw|re|wg|fw|fwd|antw|tr|wtr|sv|vs)\s*:\s*)*(-?\d{1,3}(?:\.\d{3})*,\d{2} [A-Z]{3})(?: \(prüfen\)| \?)?(?: - |\s*$)/i;
 // the mail text refers to an attachment ("anbei", "im Anhang", "attached")
 const ATTACH_REF = /\banbei\b|im anhang|in der anlage|als anlage|beigefügt|beiliegend|anhängend|\bangehängt|\bangehaengt|siehe anhang|siehe anlage|\battached\b|\benclosed\b|see attachment|please find/i;
 // the mail text names a payment beside the attached advice ("Zusätzlich haben wir heute 940,57 EUR separat überwiesen")
@@ -8765,10 +8962,11 @@ const ADDITIONAL_PAYMENT = /\b(?:zusätzlich|zusaetzlich|außerdem|ausserdem|sep
 const OWN_INVOICE_COVER = /(?:anbei|beigefügt|beiliegend|im anhang|in der anlage|als anlage)[^.!?\n]{0,60}\bunsere[rn]?\s+(?:rechnung|rechnungen|abschlagsrechnung|schlussrechnung|teilrechnung|mahnung|zahlungserinnerung|kontoauszug|auftragsbestätigung|lieferschein|angebot|kostenvoranschlag)\b|erhalten sie (?:unsere|die) (?:rechnung|rechnungen|abschlagsrechnung|schlussrechnung|teilrechnung)\b|(?:please find )?(?:attached|enclosed) (?:please find )?our (?:invoice|statement|reminder)/i;
 const WORD_NAME = /\.(?:docx?|docm|dotx?|odt|rtf|pages)$/i;
 // the header of a payment column found by the spreadsheet reader
-const PAY_COLUMN = /zahl|überw|ueberw|auszahl|gutschrift|paid|payment|remit|betaling|paiement|pagamento|pago/i;
+const PAY_COLUMN = /zahl|überw|ueberw|auszahl|gutschrift|paid|payment|remit|transfer|betaling|paiement|pagamento|pago/i;
 const SHEET_NAME = /\.(?:xlsx|xlsm|xltx|xltm|xlsb|xls|xlt|ods|csv|tsv)$/i;
-// a total row of a spreadsheet table ("Summe", "Gesamt", "Total", the SAP markers "*" / "**")
-const SHEET_TOTAL_ROW = /^\s*(?:\*{1,3}(?:\s|$)|(?:summe|gesamt(?:summe|betrag)?|endsumme|totals?|grand\s*total|sum|insgesamt)\b)/i;
+// a total row of a spreadsheet table ("Summe", "Gesamt", "Total", a first cell that ends with a total word: "Payment
+// Total", "Zahlbetrag gesamt"; the SAP markers "*" / "**")
+const SHEET_TOTAL_ROW = /^\s*(?:\*{1,3}(?:\s|$)|(?:summe|gesamt(?:summe|betrag)?|endsumme|totals?|grand\s*total|sum|insgesamt)\b|(?:[a-zäöüß][a-zäöüß.\/&-]* ){1,4}(?:gesamt|insgesamt|summe|totals?)(?: \(?(?:eur|chf|usd|gbp|€|\$|£)\)?)? ?:?(?:\s{3}|\s*$))/i;
 // the label of a total row of invoice amounts, not of the payments ("Summe Rechnungen", "Summe brutto")
 const GROSS_TOTAL = /rechnung|brutto|gross|invoice|netto|forderung|beleg/i;
 // a due-date column of a list (open items, payment plan)
@@ -8798,8 +8996,15 @@ const MAIL_HEADER_START = /^\s*(?:(?:return-path|received|from|to|cc|subject|dat
 const AUTO_SUBJECT = /^\s*(?:\[[^\]]{0,40}\]\s*)*(?:automatische antwort|automatic reply|auto(?:matic)?[- ]?reply|autoreply|abwesenheitsnotiz|abwesenheit|out of (?:the )?office|nicht im büro|réponse automatique|risposta automatica|respuesta automática|automatisch antwoord|gelesen|read|nicht gelesen|not read|unzustellbar|undeliverable|undelivered|zustellung fehlgeschlagen|übermittlungsfehler|delivery status notification|mail delivery (?:failed|failure|subsystem)|returned mail|delivery has failed)\s*(?:\([^)]{0,40}\)\s*)?:|^\s*(?:out of office|abwesenheitsnotiz|automatic reply|delivery status notification \(failure\))\b/i;
 // a payment word in a subject ("Zahlung RE-4711", "Überweisung"; not "Zahlungserinnerung", "Zahlungsbedingungen")
 const SUBJECT_PAY = /(?:^|[^a-zäöüß])(?:zahlung|überweisung|ueberweisung|bezahlt|bezahlung|gezahlt|überwiesen|payment|paid|remittance)(?![a-zäöüß])/i;
-// reasons for "other" that say nothing about what the mail is
-const NEUTRAL_OTHER = /^(?:no amount, no payment wording|amount without payment wording|no text)$/;
+// reasons for "other" that say nothing about what the mail is (an information letter without any amount, "new address",
+// does not speak against a payment named in the subject either)
+const NEUTRAL_OTHER = /^(?:no amount, no payment wording|amount without payment wording|no text|information letter \('.*'\))$/;
+// a mail text that only mentions an advice or a payment (no amount); an amount with a currency in any notation
+const MENTION_ONLY = /^(?:advice title '[^']*', but no amount found|advice word '[^']*', but no amount|payment wording, but no amount)$/;
+const MONEY_TEXT = /(?:EUR|€|CHF|USD|GBP|£|\$)\s?-?\d|\d\s?(?:EUR|€|CHF|USD|GBP|£|Euro\b)/i;
+// an advice that waits elsewhere: a supplier portal, a download link ("Neues Zahlungsavis im Lieferantenportal verfügbar",
+// "Your remittance advice is available online")
+const PORTAL_NOTE = /portal|plattform|platform|\bonline\b|abrufbar|abzurufen|herunterladen|download|verfügbar|bereitgestellt|bereit ?gestellt|steht[^.]{0,60}\bbereit\b|available|ready to view|has been (?:posted|published|uploaded)|einloggen|anmelden|log ?in|sign ?in/i;
 // amounts from this size on are no payment (an overflowing cell, a mis-read number): never in a subject
 const MAX_AMOUNT = 1e12;
 // an HTML file saved by Excel ("Web page" / "Single file web page")
@@ -9690,6 +9895,28 @@ function mailResult(mail: MailScan, kw: string, subject: string): AvisResult {
       d.why = "payment wording without an amount beside documents that are no advice";
     }
   }
+  // an advice or payment word without anything to book: no amount in the mail text, no file that could hold an advice and
+  // no photo ("können wir Ihnen ein Avis schicken?", an announcement, a note in an order or a signature, a forgotten
+  // attachment, a delivery "Avis"): no category
+  let keep = mail.photos > 0, mentioned = subjectHint !== "";
+  for (const n of mail.ignored) if (adviceHint(n) !== "") keep = true;
+  for (const d of docs) {
+    if (!d.body) {
+      if (d.verdict !== "other" || UNREADABLE_TYPE.test(d.type) || adviceHint(d.name) !== "") keep = true;
+      continue;
+    }
+    if (d.res.ok || MONEY_TEXT.test(d.res.text) || d.verdict === "advice" || d.verdict === "several") keep = true;
+    else if (d.verdict === "unclear") {
+      if (MENTION_ONLY.test(d.why) && !PORTAL_NOTE.test(d.res.text)) mentioned = true;
+      else keep = true;
+    }
+  }
+  const mentionOnly = mentioned && !keep;
+  if (mentionOnly) {
+    for (const d of docs) {
+      if (d.body && d.verdict === "unclear") { d.verdict = "other"; d.why = "only mentioned, no amount and no file (" + d.why + ")"; }
+    }
+  }
   // an automatic reply, a read receipt, a delivery report or a newsletter is no advice; an advice document in it (title,
   // bank form) stays visible as unclear
   if (auto !== "") {
@@ -9722,7 +9949,7 @@ function mailResult(mail: MailScan, kw: string, subject: string): AvisResult {
       if (neutral && (bodyAmount || image)) hint = "payment word '" + pm[0] + "' in the subject";
     }
   }
-  if (auto !== "") hint = "";
+  if (auto !== "" || mentionOnly) hint = "";
   const noDocError = mail.encrypted ? "S/MIME encrypted mail - cannot be read" : mail.rpmsg ? "protected mail (Microsoft Purview) - cannot be read"
     : mail.signed ? "signed mail contains no PDF" : "mail contains no PDF";
   const res = decideMail(docs, hint, noDocError);
@@ -9769,8 +9996,9 @@ function subjectFields(res: AvisResult, subject: string, keywords: string): void
     dropAmount(res);
     if (res.verdict === "advice") { res.verdict = "unclear"; res.verdictWhy = res.error; }
   }
+  let amt = "";
   if (res.verdict === "advice" && res.ok) {
-    const amt = germanAmount(res.amountNumber) + " " + (res.currency !== "" ? res.currency : "EUR");
+    amt = germanAmount(res.amountNumber) + " " + (res.currency !== "" ? res.currency : "EUR");
     if (res.confidence === "high") { cat = "Avise"; tag = amt; }
     else if (res.confidence === "medium") { cat = "Avise"; tag = amt + " (prüfen)"; }
     else { cat = "Avis prüfen"; tag = amt + " ?"; }
@@ -9784,9 +10012,11 @@ function subjectFields(res: AvisResult, subject: string, keywords: string): void
   res.newSubject = "";
   res.patchSubject = "";
   const subj = subject.trim();
-  // the amount goes in front of the subject; a subject that already carries an amount (in front, or behind as written by
-  // earlier versions) stays as it is (the flow ran before); a mail without a subject gets the amount alone
-  if (tag !== "" && subj !== "" && !BOT_PREFIX.test(subj) && !BOT_SUFFIX.test(subj)) {
+  // the amount goes in front of the subject; a subject that already carries this amount (in front, also after AW:/WG:, or
+  // behind as written by earlier versions) stays as it is (the flow ran before); another amount there (a new advice in a
+  // reply thread) gets the new amount in front; a mail without a subject gets the amount alone
+  const had = BOT_PREFIX.exec(subj) || BOT_SUFFIX.exec(subj);
+  if (tag !== "" && subj !== "" && (had === null || had[1].toUpperCase() !== amt.toUpperCase())) {
     res.newSubject = subj === NO_SUBJECT ? tag : tag + " - " + subj;
     res.patchSubject = JSON.stringify({ subject: res.newSubject });
   }

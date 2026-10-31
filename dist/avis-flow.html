@@ -472,9 +472,10 @@ mark.mbm { background: var(--chg-bg); color: inherit; border-radius: 3px; paddin
         <tr><td>Mehrere Avise in einer Mail</td><td><span class="cat p">mehrere Avise</span></td><td>unverändert</td></tr>
         <tr><td>Unklar: Avis-Hinweis, aber nicht lesbar (Scan, verschlüsselt, altes .xls) oder nicht sicher erkennbar</td><td><span class="cat o">Avis prüfen</span></td><td>unverändert</td></tr>
         <tr><td>Skript-Fehler oder Zeitüberschreitung</td><td><span class="cat o">Avis prüfen</span></td><td>unverändert</td></tr>
+        <tr><td>Avis nur erwähnt, ohne Betrag und ohne Datei (Frage, Ankündigung, vergessener Anhang, Lieferavis)</td><td><span class="cat n">keine</span></td><td>unverändert</td></tr>
         <tr><td>Kein Avis (Rechnung, Reklamation, Bestellung, Info, Mahnung …)</td><td><span class="cat n">keine</span></td><td>unverändert</td></tr>
       </table></div>
-      <p>„Zahlungsavis“ steht für den Betreff, den der Absender geschrieben hat; er bleibt vollständig erhalten. Der Betrag steht immer davor, im deutschen Format mit Währung und „ - “ als Trenner. Eine Mail ohne Betreff bekommt nur den Betrag.</p>
+      <p>„Zahlungsavis“ steht für den Betreff, den der Absender geschrieben hat; er bleibt vollständig erhalten. Der Betrag steht immer davor, im deutschen Format mit Währung und „ - “ als Trenner, auch vor „AW:“ oder „WG:“. Eine Mail ohne Betreff bekommt nur den Betrag. Trägt der Betreff schon denselben Betrag (Antwort auf eine bearbeitete Mail), bleibt er unverändert; ein neues Avis mit anderem Betrag kommt nach vorne: <code>12.347,80 EUR - AW: 2.601,35 EUR - Zahlungsavis</code>. Ein Hinweis auf ein Avis im Kundenportal ohne Betrag bekommt „Avis prüfen“.</p>
     </div></details>
     <details><summary>Welches Postfach? (Feld „Avis-Postfach“ oben rechts)</summary><div class="dc" id="mbDrawer"></div></details>
     <details><summary>Designer-Tipps (vor dem Bauen lesen)</summary><div class="dc"><ul>
